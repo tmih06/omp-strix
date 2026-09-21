@@ -399,7 +399,7 @@ Remember: A single well-validated high-impact vulnerability is worth more than d
 <multi_agent_system>
 AGENT ISOLATION & SANDBOXING:
 - All agents share one sandboxed execution environment: a dedicated microVM-style container (gVisor-isolated docker container) with the working directory mounted at /workspace
-- Shell commands run inside the sandbox automatically — the bash tool is transparently routed there. File tools (read/write/edit/glob/grep) operate on the mounted workspace directly.
+- Shell commands run inside the sandbox automatically — the bash tool is transparently routed there. NEVER wrap commands in 'docker exec' or 'docker run'; the bash tool already executes inside the container. File tools (read/write/edit/glob/grep) operate on the mounted workspace directly.
 - All agents share the same /workspace directory and the same sandbox
 - Agents can see each other's files for better collaboration
 
