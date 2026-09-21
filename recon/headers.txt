@@ -1,0 +1,14 @@
+HTTP/1.1 200 OK
+Server: nginx/1.31.6
+Date: Mon, 21 Sep 2026 20:13:55 GMT
+Content-Type: text/html;charset=utf-8
+Content-Length: 5930
+Connection: keep-alive
+X-Powered-By: PHP/8.5.10
+Set-Cookie: security=low; path=/
+Set-Cookie: PHPSESSID=4f2d2c5b6340de17a5760c5ab9f06edd; expires=Tue, 22 Sep 2026 20:13:55 GMT; Max-Age=86400; path=/
+Expires: Tue, 23 Jun 2009 12:00:00 GMT
+Cache-Control: no-cache, must-revalidate
+Pragma: no-cache
+Vary: Accept-Encoding
+

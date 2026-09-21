@@ -70,6 +70,7 @@ async function deactivate(pi: ExtensionAPI, ctx: { ui: { notify(m: string, l?: s
   if (strix.preTools) await pi.setActiveTools(strix.preTools);
   strix.preTools = null;
   endScan();
+  try { (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", ""); } catch { /* no UI */ }
   markSandboxActive(false);
   await stopSandbox();
   ctx.ui.notify("Strix mode off.", "info");
@@ -103,6 +104,7 @@ export default function (pi: ExtensionAPI) {
       }
       pi.setSessionName("strix");
       ctx.ui.setWorkingMessage("Scanning…");
+      ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
       ctx.ui.notify(
         "Strix mode on. Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit.",
         "info",
