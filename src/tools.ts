@@ -1,0 +1,1336 @@
+/**
+ * Strix tool ports — shared-state tools backed by the per-scan store in
+ * state.ts. All tools are registered `defaultInactive` so they only exist for
+ * the model while strix mode is on (or inside strix-* subagents that name
+ * them in their tools list).
+ */
+
+import { join } from "node:path";
+import { cvssBaseScore } from "./cvss";
+import { listSkills, loadSkillBody } from "./prompt";
+import { markSandboxActive, stopSandbox } from "./sandbox";
+import {
+  activeScan,
+  addCoverage,
+  addNote,
+  addReport,
+  callerAgent,
+  deleteFile,
+  endScan,
+  findCoverage,
+  getNote,
+  getReport,
+  getThreatModel,
+  listCoverage,
+  listNotes,
+  listReports,
+  putCoverage,
+  putNote,
+  putReport,
+  putThreatModel,
+  scanDir,
+  writeFinalReport,
+} from "./state";
+import type { Report } from "./state";
+
+type Json = Record<string, unknown>;
+
+interface ToolDef {
+  name: string;
+  label: string;
+  description: string;
+  parameters: Json;
+  execute: (
+    id: string,
+    params: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    onUpdate: unknown,
+    ctx: unknown,
+  ) => Promise<{ content: { type: string; text: string }[]; details?: Json }>;
+}
+
+function text(s: string): { content: { type: string; text: string }[] } {
+  return { content: [{ type: "text", text: s }] };
+}
+
+function json(value: unknown): { content: { type: string; text: string }[]; details: Json } {
+  return {
+    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    details: typeof value === "object" && value !== null ? (value as Json) : {},
+  };
+}
+
+function noScan(): { content: { type: string; text: string }[] } {
+  return text(
+    JSON.stringify({
+      success: false,
+      error: "No active strix scan. Activate strix mode with /strix first.",
+    }),
+  );
+}
+
+function str(params: Record<string, unknown>, key: string): string {
+  const v = params[key];
+  return typeof v === "string" ? v : v == null ? "" : String(v);
+}
+
+function strOrNull(params: Record<string, unknown>, key: string): string | null {
+  const v = str(params, key).trim();
+  return v === "" ? null : v;
+}
+
+function strList(params: Record<string, unknown>, key: string): string[] {
+  const v = params[key];
+  if (Array.isArray(v)) return v.map((x) => String(x));
+  if (typeof v === "string" && v.trim()) return [v];
+  return [];
+}
+
+const S = (desc: string) => ({ type: "string", description: desc });
+const OPT_S = (desc: string) => ({ type: "string", description: desc });
+const STR_ARR = (desc: string) => ({
+  type: "array",
+  items: { type: "string" },
+  description: desc,
+});
+
+// ---------------------------------------------------------------------------
+// think / load_skill
+// ---------------------------------------------------------------------------
+
+const think: ToolDef = {
+  name: "think",
+  label: "Think",
+  description: `Record a private chain-of-thought note. No side effects, no new info.
+
+Use think when you need a dedicated space to reason before acting — not as an output channel. It's particularly valuable for tool output analysis, policy-heavy environments (engagement scope, auth boundaries), sequential decision making where mistakes are costly, and multi-step exploit planning.
+
+Structure your thought to be useful: current state, what you've confirmed, your next planned actions, risk assessment. Don't use think to chat — use it to plan.`,
+  parameters: {
+    type: "object",
+    properties: { thought: S("The reasoning to record. Must be non-empty.") },
+    required: ["thought"],
+  },
+  async execute(_id, params) {
+    const thought = str(params, "thought");
+    if (!thought.trim()) return json({ success: false, error: "Thought cannot be empty" });
+    return json({ success: true, message: "Thought recorded" });
+  },
+};
+
+const loadSkill: ToolDef = {
+  name: "load_skill",
+  label: "Load Skill",
+  description: `Return the markdown body of one or more skills as reference material.
+
+Use this when you need exact syntax / workflow / payload guidance right before acting on a technology that wasn't preloaded for your agent. The skill content lands inline as a tool result — no permanent prompt change, just in-conversation reference.
+
+For permanent skill assignment, name the skills in a specialist's task instructions when spawning it instead.`,
+  parameters: {
+    type: "object",
+    properties: {
+      skills: STR_ARR('Skill names, e.g. ["xss", "sql_injection"]. Max 5.'),
+    },
+    required: ["skills"],
+  },
+  async execute(_id, params) {
+    const requested = strList(params, "skills");
+    if (requested.length === 0) return text("load_skill: no skills requested.");
+    if (requested.length > 5) return text("load_skill: too many skills requested (max 5).");
+    const known = new Set(listSkills().flatMap((s) => [s.name, `${s.category}/${s.name}`]));
+    const sections: string[] = [];
+    const missing: string[] = [];
+    for (const name of requested) {
+      if (!known.has(name)) {
+        missing.push(name);
+        continue;
+      }
+      const body = loadSkillBody(name);
+      if (body) sections.push(`## Skill: ${name}\n\n${body}`);
+    }
+    if (missing.length > 0) {
+      return text(
+        `load_skill: unknown skill(s): ${missing.join(", ")}. ` +
+          `Available: ${[...known].filter((k) => !k.includes("/")).join(", ")}`,
+      );
+    }
+    if (sections.length === 0) return text("load_skill: no content loaded for requested skills.");
+    return text(sections.join("\n\n---\n\n"));
+  },
+};
+
+// ---------------------------------------------------------------------------
+// notes — shared scan scratchpad
+// ---------------------------------------------------------------------------
+
+const NOTE_CATEGORIES = ["general", "findings", "methodology", "questions", "assets"];
+
+const createNote: ToolDef = {
+  name: "create_note",
+  label: "Create Note",
+  description: `Document an observation, finding, methodology step, or research note.
+
+Notes are visible to every agent in the same scan for the lifetime of the run. Each note records the agent that wrote it, so list_notes / get_note show the author (agent_name) and flag your own notes with by_you.
+
+For actionable tasks, use todo instead — notes are for capturing information, todos are for tracking work.
+
+Categories: general (default), findings (confirmed vulnerabilities or weaknesses — write these up promptly; you'll cite them when filing reports), methodology (what you tried, what worked, what didn't), questions (open questions / hypotheses), assets (discovered endpoints, credentials, hosts).`,
+  parameters: {
+    type: "object",
+    properties: {
+      title: S("Short note title."),
+      content: S("Note body — markdown."),
+      category: { ...S("One of: " + NOTE_CATEGORIES.join(", ")), enum: NOTE_CATEGORIES },
+      tags: STR_ARR("Optional tags."),
+    },
+    required: ["title", "content"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const title = str(params, "title").trim();
+    const content = str(params, "content").trim();
+    if (!title || !content) return json({ success: false, error: "title and content are required" });
+    const note = addNote(dir, {
+      title,
+      content,
+      category: str(params, "category") || "general",
+      tags: strList(params, "tags"),
+      agent: callerAgent(ctx),
+    });
+    return json({ success: true, note_id: note.id });
+  },
+};
+
+const listNotesTool: ToolDef = {
+  name: "list_notes",
+  label: "List Notes",
+  description: `List notes recorded in this scan — metadata-first.
+
+Returns each note's id, title, category, tags, author (agent_name), and a content preview, plus category counts. Filter by category or a substring search over title/content.`,
+  parameters: {
+    type: "object",
+    properties: {
+      category: OPT_S("Optional category filter."),
+      search: OPT_S("Optional case-insensitive substring filter over title/content."),
+    },
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const me = callerAgent(ctx);
+    const category = strOrNull(params, "category");
+    const search = strOrNull(params, "search")?.toLowerCase();
+    const notes = listNotes(dir)
+      .filter((n) => !category || n.category === category)
+      .filter(
+        (n) =>
+          !search ||
+          n.title.toLowerCase().includes(search) ||
+          n.content.toLowerCase().includes(search),
+      )
+      .map((n) => ({
+        note_id: n.id,
+        title: n.title,
+        category: n.category,
+        tags: n.tags,
+        agent_name: n.agent,
+        by_you: n.agent === me,
+        preview: n.content.slice(0, 240),
+      }));
+    const counts: Record<string, number> = {};
+    for (const n of notes) counts[n.category] = (counts[n.category] ?? 0) + 1;
+    return json({ success: true, count: notes.length, category_counts: counts, notes });
+  },
+};
+
+const getNoteTool: ToolDef = {
+  name: "get_note",
+  label: "Get Note",
+  description: "Fetch one note in full by its id.",
+  parameters: {
+    type: "object",
+    properties: { note_id: S("Note id from list_notes.") },
+    required: ["note_id"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const note = getNote(dir, str(params, "note_id"));
+    if (!note) return json({ success: false, error: "Note not found" });
+    return json({ success: true, by_you: note.agent === callerAgent(ctx), note });
+  },
+};
+
+const updateNote: ToolDef = {
+  name: "update_note",
+  label: "Update Note",
+  description: `Update a note's title, content, or tags. Pass only the fields that change.`,
+  parameters: {
+    type: "object",
+    properties: {
+      note_id: S("Note id to update."),
+      title: OPT_S("New title, or omit to keep."),
+      content: OPT_S("New content, or omit to keep."),
+      tags: STR_ARR("New tags list, or omit to keep."),
+    },
+    required: ["note_id"],
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const note = getNote(dir, str(params, "note_id"));
+    if (!note) return json({ success: false, error: "Note not found" });
+    const title = strOrNull(params, "title");
+    const content = strOrNull(params, "content");
+    if (title) note.title = title;
+    if (content) note.content = content;
+    if (params.tags !== undefined) note.tags = strList(params, "tags");
+    note.updatedAt = new Date().toISOString();
+    putNote(dir, note);
+    return json({ success: true, note_id: note.id });
+  },
+};
+
+const deleteNote: ToolDef = {
+  name: "delete_note",
+  label: "Delete Note",
+  description: "Delete a note by id. Only for something now wrong or superseded.",
+  parameters: {
+    type: "object",
+    properties: { note_id: S("Note id to delete.") },
+    required: ["note_id"],
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const id = str(params, "note_id");
+    if (!getNote(dir, id)) return json({ success: false, error: "Note not found" });
+    deleteFile(dir, "notes", id);
+    return json({ success: true, deleted: id });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// coverage — shared ledger of what was assessed and how it closed
+// ---------------------------------------------------------------------------
+
+const COVERAGE_OUTCOMES = [
+  "reported",
+  "no_issue_found",
+  "ruled_out",
+  "not_applicable",
+  "needs_follow_up",
+];
+const EVIDENCE_REQUIRED = new Set(["ruled_out", "not_applicable", "needs_follow_up"]);
+
+const recordCoverage: ToolDef = {
+  name: "record_coverage",
+  label: "Record Coverage",
+  description: `Record that you reviewed a surface, and how that review closed.
+
+A scan that only reports findings cannot answer the question every client asks: what did you actually check? This tool captures that negative space. Record an entry whenever you finish assessing a surface for a risk — including (especially including) when you found nothing.
+
+Record coverage as you go, not in a batch at the end. Entries are shared across every agent in the scan, and the root agent reconciles them into the final report.
+
+Coverage is not append-only bookkeeping: if this surface and risk already have an entry — yours or another agent's — this call is rejected and returns that entry's id, because two rows for one surface leave the report showing a stale conclusion next to its replacement. Call update_coverage on the id instead.`,
+  parameters: {
+    type: "object",
+    properties: {
+      surface: S('The surface assessed, e.g. "POST /api/users" or "auth/session.py".'),
+      risk_area: S('The risk assessed, e.g. "idor", "sqli", "secrets".'),
+      outcome: { ...S("One of: " + COVERAGE_OUTCOMES.join(", ")), enum: COVERAGE_OUTCOMES },
+      evidence: S(
+        "Required for ruled_out / not_applicable / needs_follow_up: the named control, the reason, or the specific gap.",
+      ),
+    },
+    required: ["surface", "risk_area", "outcome"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const surface = str(params, "surface").trim();
+    const riskArea = str(params, "risk_area").trim();
+    const outcome = str(params, "outcome").trim();
+    const evidence = str(params, "evidence").trim();
+    if (!surface || !riskArea || !outcome) {
+      return json({ success: false, error: "surface, risk_area and outcome are required" });
+    }
+    if (!COVERAGE_OUTCOMES.includes(outcome)) {
+      return json({ success: false, error: `outcome must be one of ${COVERAGE_OUTCOMES.join(", ")}` });
+    }
+    if (EVIDENCE_REQUIRED.has(outcome) && !evidence) {
+      return json({ success: false, error: `evidence is required for outcome=${outcome}` });
+    }
+    const existing = findCoverage(dir, surface, riskArea);
+    if (existing) {
+      return json({
+        success: false,
+        error:
+          "An entry for this surface+risk already exists. Call update_coverage on the existing id instead.",
+        existing_id: existing.id,
+        existing_outcome: existing.outcome,
+      });
+    }
+    const entry = addCoverage(dir, {
+      surface,
+      riskArea,
+      outcome,
+      evidence,
+      agent: callerAgent(ctx),
+    });
+    return json({ success: true, coverage_id: entry.id });
+  },
+};
+
+const updateCoverage: ToolDef = {
+  name: "update_coverage",
+  label: "Update Coverage",
+  description: `Change how an already-recorded surface closed.
+
+The ledger is shared and mutable: when you resolve a surface another agent left open — or find that a closed one is not — move that entry with update_coverage instead of recording a second one for the same surface. The previous state is kept as history.`,
+  parameters: {
+    type: "object",
+    properties: {
+      coverage_id: S("Entry id from record_coverage / list_coverage."),
+      outcome: { ...S("New outcome."), enum: COVERAGE_OUTCOMES },
+      evidence: S("What changed — required for ruled_out / not_applicable / needs_follow_up."),
+    },
+    required: ["coverage_id", "outcome"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const id = str(params, "coverage_id");
+    const outcome = str(params, "outcome").trim();
+    const evidence = str(params, "evidence").trim();
+    if (!COVERAGE_OUTCOMES.includes(outcome)) {
+      return json({ success: false, error: `outcome must be one of ${COVERAGE_OUTCOMES.join(", ")}` });
+    }
+    if (EVIDENCE_REQUIRED.has(outcome) && !evidence) {
+      return json({ success: false, error: `evidence is required for outcome=${outcome}` });
+    }
+    const entry = listCoverage(dir).find((e) => e.id === id);
+    if (!entry) return json({ success: false, error: `Coverage entry ${id} not found` });
+    entry.history.push({
+      outcome: entry.outcome,
+      evidence: entry.evidence,
+      at: entry.updatedAt,
+      agent: entry.agent,
+    });
+    entry.outcome = outcome;
+    if (evidence) entry.evidence = evidence;
+    entry.agent = callerAgent(ctx);
+    entry.updatedAt = new Date().toISOString();
+    putCoverage(dir, entry);
+    return json({ success: true, coverage_id: id, outcome });
+  },
+};
+
+const listCoverageTool: ToolDef = {
+  name: "list_coverage",
+  label: "List Coverage",
+  description: `List coverage entries recorded so far in this scan.
+
+Returns each entry's id, surface, risk_area, outcome, evidence preview, and the agent that recorded it, plus outcome_counts across the whole scan. Filter on needs_follow_up before finishing the scan to see what is still open.`,
+  parameters: {
+    type: "object",
+    properties: {
+      outcome: { ...OPT_S("Optional outcome filter."), enum: COVERAGE_OUTCOMES },
+      surface: OPT_S("Optional case-insensitive substring filter on the surface name."),
+    },
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const outcome = strOrNull(params, "outcome");
+    const surface = strOrNull(params, "surface")?.toLowerCase();
+    const all = listCoverage(dir);
+    const entries = all
+      .filter((e) => !outcome || e.outcome === outcome)
+      .filter((e) => !surface || e.surface.toLowerCase().includes(surface))
+      .map((e) => ({
+        coverage_id: e.id,
+        surface: e.surface,
+        risk_area: e.riskArea,
+        outcome: e.outcome,
+        evidence: e.evidence.slice(0, 240),
+        agent_name: e.agent,
+      }));
+    const counts: Record<string, number> = {};
+    for (const e of all) counts[e.outcome] = (counts[e.outcome] ?? 0) + 1;
+    return json({ success: true, count: entries.length, outcome_counts: counts, entries });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// threat model — one shared model per scan target
+// ---------------------------------------------------------------------------
+
+const getThreatModelTool: ToolDef = {
+  name: "get_threat_model",
+  label: "Get Threat Model",
+  description: `Read this scan's threat model for a target, if an agent has derived one.
+
+The threat model is this run's shared answer to who the attacker is, where the trust boundaries sit, and what counts as critical here. Call it before you start hunting so you inherit the shared view instead of re-deriving it, and so every agent on this run agrees on what "attacker-controlled" means.
+
+It is scoped to this scan and nothing is carried over from an earlier run, so an empty result means no agent has derived one yet. Works black-box or white-box. The target can be a host, a URL, an API base, or a repository path.
+
+Returns found: false when nothing has been derived yet — derive one and share it with save_threat_model.`,
+  parameters: {
+    type: "object",
+    properties: { target: S("Host, URL, API base, or repository path.") },
+    required: ["target"],
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const model = getThreatModel(dir, str(params, "target"));
+    if (!model) return json({ found: false, target: str(params, "target") });
+    return json({ found: true, target: model.target, model: model.model, amendments: model.amendments });
+  },
+};
+
+const saveThreatModel: ToolDef = {
+  name: "save_threat_model",
+  label: "Save Threat Model",
+  description: `Save (or replace) the threat model for a target.
+
+This REPLACES the whole document and clears its amendments — use it to establish the baseline, or to fold accumulated amendments into the body. To correct part of an existing model, call amend_threat_model instead.`,
+  parameters: {
+    type: "object",
+    properties: {
+      target: S("What the model describes — host, URL, or repository path."),
+      model: S("The threat model, in Markdown."),
+    },
+    required: ["target", "model"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const target = str(params, "target").trim();
+    const model = str(params, "model").trim();
+    if (!target || !model) return json({ success: false, error: "target and model are required" });
+    putThreatModel(dir, {
+      target,
+      model,
+      agent: callerAgent(ctx),
+      updatedAt: new Date().toISOString(),
+      amendments: [],
+    });
+    return json({ success: true, target });
+  },
+};
+
+const amendThreatModel: ToolDef = {
+  name: "amend_threat_model",
+  label: "Amend Threat Model",
+  description: `Append an attributed correction to a target's threat model.
+
+Use when your testing disproves the shared model — a boundary it calls trusted turns out to be attacker-reachable, a role it did not know about, a host or endpoint it never listed. The amendment is appended, not merged: the next reader sees both the original claim and your correction.
+
+Not worth amending: individual findings (those are reports), or restating what the model already says.`,
+  parameters: {
+    type: "object",
+    properties: {
+      target: S("The same host, URL, or repository path the model describes."),
+      addendum: S(
+        "The correction, in Markdown. State what the base model says, what is actually true, and the endpoint, host, file, or control that proves it.",
+      ),
+    },
+    required: ["target", "addendum"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const target = str(params, "target").trim();
+    const addendum = str(params, "addendum").trim();
+    if (!target || !addendum) return json({ success: false, error: "target and addendum are required" });
+    const model = getThreatModel(dir, target) ?? {
+      target,
+      model: "",
+      agent: callerAgent(ctx),
+      updatedAt: new Date().toISOString(),
+      amendments: [],
+    };
+    model.amendments.push({ agent: callerAgent(ctx), at: new Date().toISOString(), text: addendum });
+    model.updatedAt = new Date().toISOString();
+    putThreatModel(dir, model);
+    return json({ success: true, target, amendment_count: model.amendments.length });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// vulnerability reports — shared store, deterministic dedupe
+// ---------------------------------------------------------------------------
+
+const CVSS_VALID: Record<string, string[]> = {
+  attack_vector: ["N", "A", "L", "P"],
+  attack_complexity: ["L", "H"],
+  privileges_required: ["N", "L", "H"],
+  user_interaction: ["N", "R"],
+  scope: ["U", "C"],
+  confidentiality: ["N", "L", "H"],
+  integrity: ["N", "L", "H"],
+  availability: ["N", "L", "H"],
+};
+
+const REQUIRED_REPORT_FIELDS: Record<string, string> = {
+  title: "Title cannot be empty",
+  description: "Description cannot be empty",
+  impact: "Impact cannot be empty",
+  target: "Target cannot be empty",
+  technical_analysis: "Technical analysis cannot be empty",
+  poc_description: "PoC description cannot be empty",
+  poc_script_code: "PoC script/code is REQUIRED - provide the actual exploit/payload",
+  remediation_steps: "Remediation steps cannot be empty",
+  evidence: "Evidence cannot be empty - provide concrete proof of the finding",
+  assumptions: "Assumptions cannot be empty - state exploitability prerequisites",
+};
+
+const VALID_FIX_EFFORT = new Set(["trivial", "low", "medium", "high"]);
+const VALID_CONFIDENCE = new Set(["high", "medium", "low"]);
+const VALID_REACHABILITY = new Set([
+  "not_imported",
+  "imported",
+  "vulnerable_symbol_used",
+  "reachable_call_path",
+  "unknown",
+]);
+const MAX_CONTEXTUAL_REASONING = 2000;
+
+const UPDATE_TEXT_FIELDS = [
+  "title",
+  "description",
+  "impact",
+  "target",
+  "technical_analysis",
+  "poc_description",
+  "poc_script_code",
+  "remediation_steps",
+  "evidence",
+  "assumptions",
+  "counterevidence",
+  "confidence_rationale",
+  "severity_change_conditions",
+  "endpoint",
+  "method",
+  "fix_verification",
+  "fix_pr_body",
+  "contextual_cvss_reasoning",
+] as const;
+// Evidence only a dynamic finding carries; a dependency finding describes a
+// package, not a request against an endpoint.
+const DYNAMIC_ONLY_UPDATE_FIELDS = new Set([
+  "endpoint",
+  "method",
+  "poc_description",
+  "poc_script_code",
+  "http_exchange_ids",
+]);
+const DEPENDENCY_ONLY_UPDATE_FIELDS = new Set(["contextual_cvss_reasoning"]);
+
+function extractCve(raw: string): string {
+  const m = /CVE-\d{4}-\d{4,}/.exec(raw);
+  return m ? m[0] : raw.trim();
+}
+function extractCwe(raw: string): string {
+  const m = /CWE-\d+/.exec(raw);
+  return m ? m[0] : raw.trim();
+}
+function validateCvssBreakdown(breakdown: unknown): string[] {
+  if (!breakdown || typeof breakdown !== "object") {
+    return ["cvss_breakdown is required: all 8 CVSS v3.1 metrics"];
+  }
+  const b = breakdown as Record<string, unknown>;
+  const errors: string[] = [];
+  for (const [name, valid] of Object.entries(CVSS_VALID)) {
+    const v = b[name];
+    if (typeof v !== "string" || !valid.includes(v)) {
+      errors.push(`Invalid cvss_breakdown ${name}: ${String(v)}. Must be one of: ${valid.join(", ")}`);
+    }
+  }
+  return errors;
+}
+
+function validateIdentifiers(cve: string | null, cwe: string | null): {
+  cve: string | null;
+  cwe: string | null;
+  errors: string[];
+} {
+  const errors: string[] = [];
+  let outCve: string | null = null;
+  let outCwe: string | null = null;
+  if (cve) {
+    outCve = extractCve(cve);
+    if (!/^CVE-\d{4}-\d{4,}$/.test(outCve)) {
+      errors.push(`invalid CVE format: '${outCve}' (expected 'CVE-YYYY-NNNNN')`);
+    }
+  }
+  if (cwe) {
+    outCwe = extractCwe(cwe);
+    if (!/^CWE-\d+$/.test(outCwe)) {
+      errors.push(`invalid CWE format: '${outCwe}' (expected 'CWE-NNN')`);
+    }
+  }
+  return { cve: outCve, cwe: outCwe, errors };
+}
+
+function validateAnalysisFields(
+  counterevidence: string,
+  confidence: string,
+  confidenceRationale: string | null,
+  severityChangeConditions: string,
+): string[] {
+  const errors: string[] = [];
+  if (!counterevidence.trim()) {
+    errors.push(
+      "counterevidence cannot be empty - name the benign explanation you ruled out, or state explicitly that none exists",
+    );
+  }
+  if (!severityChangeConditions.trim()) {
+    errors.push(
+      "severity_change_conditions cannot be empty - state the one concrete piece of evidence that would raise or lower the severity",
+    );
+  }
+  if (!VALID_CONFIDENCE.has(confidence)) {
+    errors.push(`Invalid confidence: '${confidence}'. Must be one of: high, medium, low`);
+  } else if (confidence !== "high" && !(confidenceRationale ?? "").trim()) {
+    errors.push(
+      "confidence_rationale is required when confidence is not 'high' - name the assumption your rating leans on",
+    );
+  }
+  return errors;
+}
+
+function validateFixVerification(
+  locations: Record<string, unknown>[] | null,
+  fixVerification: string | null,
+): string[] {
+  if (!locations || !locations.some((l) => l.fix_after)) return [];
+  if ((fixVerification ?? "").trim()) return [];
+  return [
+    "fix_verification is REQUIRED when any code_location carries a 'fix_after' - a suggestion a reviewer can click to apply must be verified first. State, in order: (1) security closure - re-trace the source->sink path through the PATCHED code and say why it is now blocked; (2) bypass review - name the equivalent sinks, sibling call sites, and alternate malicious input classes you checked; (3) preserved behavior - the legitimate inputs, APIs, and error semantics that still work; (4) how each was checked (executed vs. reasoned), naming any unrun check as an explicit gap. If you cannot make these statements, drop 'fix_after' and leave the location informational.",
+  ];
+}
+
+function normalizeCodeLocations(raw: unknown): Record<string, unknown>[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: Record<string, unknown>[] = [];
+  for (const loc of raw) {
+    if (!loc || typeof loc !== "object") continue;
+    const l = loc as Record<string, unknown>;
+    if (typeof l.file !== "string" || !l.file.trim()) continue;
+    if (typeof l.start_line !== "number" || !Number.isInteger(l.start_line)) continue;
+    out.push(l);
+  }
+  return out.length ? out : null;
+}
+
+function validateCodeLocations(locations: Record<string, unknown>[]): string[] {
+  const errors: string[] = [];
+  for (const loc of locations) {
+    const file = String(loc.file);
+    if (file.startsWith("/") || file.includes("..")) {
+      errors.push(`code_location file must be a relative path within the target, got '${file}'`);
+    }
+  }
+  return errors;
+}
+
+function findingClassOf(report: Report): string {
+  const declared = String(report.findingClass ?? "").toLowerCase();
+  if (declared) return declared;
+  if (report.dependency_metadata) return "dependency_cve";
+  return "dynamic";
+}
+
+function normalizeTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Deterministic dedupe: normalized title + target match against existing reports. */
+function findDuplicate(
+  dir: string,
+  title: string,
+  target: string,
+): Report | null {
+  const t = normalizeTitle(title);
+  const tgt = target.trim().toLowerCase();
+  for (const r of listReports(dir)) {
+    if (normalizeTitle(String(r.title ?? "")) === t && String(r.target ?? "").trim().toLowerCase() === tgt) {
+      return r;
+    }
+  }
+  return null;
+}
+
+const CVSS_BREAKDOWN_SCHEMA = {
+  type: "object",
+  properties: Object.fromEntries(
+    Object.keys(CVSS_VALID).map((k) => [k, { type: "string" }]),
+  ),
+  required: Object.keys(CVSS_VALID),
+};
+
+const createVulnerabilityReport: ToolDef = {
+  name: "create_vulnerability_report",
+  label: "Create Vulnerability Report",
+  description: `File a confirmed vulnerability as a report.
+
+Call this only for a vulnerability you have actually proven — a working PoC, a concrete request/response, a demonstrated exploit path. Unverified suspicions belong in notes, not here.
+
+Every report needs the full evidence package: description, impact, technical analysis, PoC description AND the actual PoC code, remediation steps, evidence, assumptions, counterevidence, confidence, severity-change conditions, fix effort, and a CVSS v3.1 breakdown (the score and severity are computed from it).
+
+Known-CVE dependency / supply-chain findings that can't be dynamically PoC'd belong in create_dependency_report instead, never here.
+
+If you get a duplicate_of response, do NOT retry — move on to other testing.`,
+  parameters: {
+    type: "object",
+    properties: {
+      title: S("Short vulnerability title."),
+      description: S("What the vulnerability is."),
+      impact: S("What an attacker gains."),
+      target: S("Host, URL, or repository path the finding applies to."),
+      technical_analysis: S("Root cause and mechanism."),
+      poc_description: S("What the PoC does."),
+      poc_script_code: S("The actual exploit/payload code."),
+      remediation_steps: S("How to fix it."),
+      evidence: S("Concrete proof — request/response, output, trace."),
+      assumptions: S("Exploitability prerequisites."),
+      counterevidence: S("The benign explanation you ruled out, or 'none'."),
+      confidence: { ...S("high | medium | low"), enum: ["high", "medium", "low"] },
+      confidence_rationale: OPT_S("Required when confidence is not 'high'."),
+      severity_change_conditions: S("The one concrete piece of evidence that would move the severity."),
+      fix_effort: { ...S("trivial | low | medium | high"), enum: ["trivial", "low", "medium", "high"] },
+      cvss_breakdown: CVSS_BREAKDOWN_SCHEMA,
+      endpoint: OPT_S("Affected endpoint, if any."),
+      method: OPT_S("HTTP method, if any."),
+      cve: OPT_S("CVE id, if any."),
+      cwe: OPT_S("CWE id, if any."),
+      code_locations: {
+        type: "array",
+        items: { type: "object" },
+        description: "Optional [{file, start_line, end_line?, snippet?, label?, fix_before?, fix_after?}].",
+      },
+      fix_verification: OPT_S("Required when any code_location has fix_after."),
+      fix_pr_body: OPT_S("Optional PR body for the fix."),
+      http_exchange_ids: { type: "array", items: { type: "string" }, description: "Optional related exchange ids." },
+    },
+    required: [
+      "title", "description", "impact", "target", "technical_analysis",
+      "poc_description", "poc_script_code", "remediation_steps", "evidence",
+      "assumptions", "counterevidence", "confidence", "severity_change_conditions",
+      "fix_effort", "cvss_breakdown",
+    ],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const p = params as Record<string, unknown>;
+    const errors: string[] = [];
+    for (const [name, msg] of Object.entries(REQUIRED_REPORT_FIELDS)) {
+      if (!str(p, name).trim()) errors.push(msg);
+    }
+    const confidence = str(p, "confidence").toLowerCase();
+    errors.push(
+      ...validateAnalysisFields(
+        str(p, "counterevidence"),
+        confidence,
+        strOrNull(p, "confidence_rationale"),
+        str(p, "severity_change_conditions"),
+      ),
+    );
+    const fixEffort = str(p, "fix_effort").toLowerCase();
+    if (!VALID_FIX_EFFORT.has(fixEffort)) {
+      errors.push(`Invalid fix_effort: '${fixEffort}'. Must be one of: trivial, low, medium, high`);
+    }
+    errors.push(...validateCvssBreakdown(p.cvss_breakdown));
+    const locations = normalizeCodeLocations(p.code_locations);
+    if (locations) errors.push(...validateCodeLocations(locations));
+    errors.push(...validateFixVerification(locations, strOrNull(p, "fix_verification")));
+    const { cve, cwe, errors: idErrors } = validateIdentifiers(
+      strOrNull(p, "cve"),
+      strOrNull(p, "cwe"),
+    );
+    errors.push(...idErrors);
+    if (errors.length) return json({ success: false, error: "Validation failed", errors });
+
+    const cvss = cvssBaseScore(p.cvss_breakdown as Record<string, string>);
+    if (typeof cvss === "string") {
+      return json({ success: false, error: "Validation failed", errors: [cvss] });
+    }
+
+    const title = str(p, "title");
+    const target = str(p, "target");
+    const dup = findDuplicate(dir, title, target);
+    if (dup) {
+      return json({
+        success: false,
+        error: `Potential duplicate of '${dup.title}' (id=${dup.id}) — do not re-report the same vulnerability`,
+        duplicate_of: dup.id,
+        duplicate_title: dup.title,
+      });
+    }
+
+    const report = addReport(dir, "vuln", {
+      findingClass: "dynamic",
+      agent: callerAgent(ctx),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      revisions: [],
+      title,
+      description: str(p, "description"),
+      severity: cvss.severity,
+      impact: str(p, "impact"),
+      target,
+      technical_analysis: str(p, "technical_analysis"),
+      poc_description: str(p, "poc_description"),
+      poc_script_code: str(p, "poc_script_code"),
+      remediation_steps: str(p, "remediation_steps"),
+      evidence: str(p, "evidence"),
+      assumptions: str(p, "assumptions"),
+      counterevidence: str(p, "counterevidence"),
+      confidence,
+      confidence_rationale: strOrNull(p, "confidence_rationale"),
+      severity_change_conditions: str(p, "severity_change_conditions"),
+      fix_effort: fixEffort,
+      cvss: cvss.score,
+      cvss_breakdown: p.cvss_breakdown,
+      endpoint: strOrNull(p, "endpoint"),
+      method: strOrNull(p, "method"),
+      cve,
+      cwe,
+      code_locations: locations,
+      fix_verification: strOrNull(p, "fix_verification"),
+      fix_pr_body: strOrNull(p, "fix_pr_body"),
+      http_exchange_ids: Array.isArray(p.http_exchange_ids) ? p.http_exchange_ids : [],
+    });
+    return json({
+      success: true,
+      message: `Vulnerability report '${title}' created`,
+      report_id: report.id,
+      severity: cvss.severity,
+      cvss_score: cvss.score,
+    });
+  },
+};
+
+const createDependencyReport: ToolDef = {
+  name: "create_dependency_report",
+  label: "Create Dependency Report",
+  description: `File a known-CVE dependency / supply-chain finding.
+
+For vulnerable dependency versions pinned in a manifest or lockfile — the findings a scanner like trivy produces — that cannot be dynamically PoC'd. Never use this for a vulnerability you proved dynamically; that belongs in create_vulnerability_report.
+
+Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS breakdown re-rated for this codebase, with reasoning a reader can check. Reachability is a prioritization signal, not proof of exploitability.`,
+  parameters: {
+    type: "object",
+    properties: {
+      title: S("Short finding title."),
+      description: S("What the advisory is."),
+      target: S("Repository path or target the finding applies to."),
+      cve: S("CVE id."),
+      package_name: S("Vulnerable package."),
+      installed_version: S("Pinned/installed version."),
+      package_ecosystem: S("npm, pip, maven, go, ..."),
+      impact: S("What the vulnerability allows."),
+      remediation_steps: S("Upgrade path / mitigation."),
+      assumptions: S("Prerequisites."),
+      fixed_version: OPT_S("Version that fixes it, if known."),
+      cwe: OPT_S("CWE id, if any."),
+      advisory_cvss: { type: "number", description: "Published advisory base score 0.0-10.0." },
+      technical_analysis: OPT_S("Optional deeper analysis."),
+      fix_effort: { ...S("trivial | low | medium | high"), enum: ["trivial", "low", "medium", "high"] },
+      introduced_by: OPT_S("Direct dependency that pulls this in, if transitive."),
+      dependency_path: OPT_S("Dependency chain string."),
+      manifest_path: S("Repo-relative path of the lockfile/manifest where the version was observed."),
+      reachability: { ...S("not_imported | imported | vulnerable_symbol_used | reachable_call_path | unknown"), enum: [...VALID_REACHABILITY] },
+      reachability_evidence: OPT_S("Evidence for the reachability claim."),
+      contextual_cvss_breakdown: CVSS_BREAKDOWN_SCHEMA,
+      contextual_cvss_reasoning: S("What you observed in this codebase that justifies the contextual rating."),
+    },
+    required: [
+      "title", "description", "target", "cve", "package_name", "installed_version",
+      "package_ecosystem", "impact", "remediation_steps", "assumptions",
+      "advisory_cvss", "fix_effort", "manifest_path",
+      "contextual_cvss_breakdown", "contextual_cvss_reasoning",
+    ],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const p = params as Record<string, unknown>;
+    const errors: string[] = [];
+    for (const name of [
+      "title", "description", "target", "package_name", "installed_version",
+      "package_ecosystem", "impact", "remediation_steps", "assumptions",
+    ]) {
+      if (!str(p, name).trim()) errors.push(`${name} cannot be empty`);
+    }
+    const cve = extractCve(str(p, "cve"));
+    if (!/^CVE-\d{4}-\d{4,}$/.test(cve)) {
+      errors.push(`invalid CVE format: '${cve}' (expected 'CVE-YYYY-NNNNN')`);
+    }
+    let cwe: string | null = null;
+    if (strOrNull(p, "cwe")) {
+      cwe = extractCwe(str(p, "cwe"));
+      if (!/^CWE-\d+$/.test(cwe)) errors.push(`invalid CWE format: '${cwe}' (expected 'CWE-NNN')`);
+    }
+    const fixEffort = str(p, "fix_effort").toLowerCase();
+    if (!VALID_FIX_EFFORT.has(fixEffort)) {
+      errors.push(`Invalid fix_effort: '${fixEffort}'. Must be one of: trivial, low, medium, high`);
+    }
+    const manifestPath = str(p, "manifest_path").trim();
+    if (!manifestPath) {
+      errors.push("manifest_path is required: the repo-relative path of the lockfile/manifest where the vulnerable version was observed");
+    } else if (manifestPath.startsWith("/") || manifestPath.includes("\\") || manifestPath.split("/").some((s) => s === "" || s === "." || s === "..")) {
+      errors.push(`manifest_path must be a relative path within the repository, got '${manifestPath}'`);
+    }
+    const advisoryCvss = typeof p.advisory_cvss === "number" ? p.advisory_cvss : null;
+    if (advisoryCvss === null || advisoryCvss < 0 || advisoryCvss > 10) {
+      errors.push("advisory_cvss is required: the published advisory base score (0.0-10.0)");
+    }
+    const reachability = str(p, "reachability") || "unknown";
+    if (!VALID_REACHABILITY.has(reachability)) {
+      errors.push(`Invalid reachability: '${reachability}'`);
+    }
+    errors.push(...validateCvssBreakdown(p.contextual_cvss_breakdown));
+    const reasoning = str(p, "contextual_cvss_reasoning").trim();
+    if (!reasoning) {
+      errors.push("contextual_cvss_reasoning is required: state what you observed in this codebase that justifies the contextual rating");
+    }
+    if (errors.length) return json({ success: false, error: "Validation failed", errors });
+
+    const cvss = cvssBaseScore(p.contextual_cvss_breakdown as Record<string, string>);
+    if (typeof cvss === "string") {
+      return json({ success: false, error: "Validation failed", errors: [cvss] });
+    }
+
+    const title = str(p, "title");
+    const target = str(p, "target");
+    const dup = findDuplicate(dir, title, target);
+    if (dup) {
+      return json({
+        success: false,
+        error: `Potential duplicate (id=${dup.id}) — do not re-report the same dependency finding`,
+        duplicate_of: dup.id,
+      });
+    }
+
+    const metadata: Record<string, unknown> = {
+      package_name: str(p, "package_name").trim(),
+      installed_version: str(p, "installed_version").trim(),
+      advisory_cvss: advisoryCvss,
+      package_ecosystem: str(p, "package_ecosystem").trim(),
+      manifest_path: manifestPath,
+      contextual_cvss_breakdown: p.contextual_cvss_breakdown,
+      contextual_cvss_score: cvss.score,
+      contextual_cvss_vector: cvss.vector,
+      contextual_cvss_reasoning: reasoning.slice(0, MAX_CONTEXTUAL_REASONING),
+    };
+    for (const k of ["fixed_version", "introduced_by", "dependency_path", "reachability_evidence"] as const) {
+      const v = strOrNull(p, k);
+      if (v) metadata[k] = v;
+    }
+    metadata.reachability = reachability;
+
+    let evidence = `**Advisory evidence:** \`${cve}\` applies to \`${metadata.package_name}\` at installed version \`${metadata.installed_version}\`.`;
+    if (metadata.fixed_version) evidence += ` The advisory is fixed in \`${metadata.fixed_version}\`.`;
+    if (metadata.introduced_by) evidence += `\n\n**Transitive dependency:** introduced by the direct dependency \`${metadata.introduced_by}\`.`;
+    if (metadata.dependency_path) evidence += `\n\n**Dependency chain:** \`${metadata.dependency_path}\``;
+
+    const report = addReport(dir, "dep", {
+      findingClass: "dependency_cve",
+      agent: callerAgent(ctx),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      revisions: [],
+      title,
+      description: str(p, "description"),
+      severity: cvss.severity,
+      impact: str(p, "impact"),
+      target,
+      technical_analysis: strOrNull(p, "technical_analysis"),
+      remediation_steps: str(p, "remediation_steps"),
+      evidence,
+      assumptions: str(p, "assumptions"),
+      fix_effort: fixEffort,
+      cvss: cvss.score,
+      cve,
+      cwe,
+      dependency_metadata: metadata,
+    });
+    return json({
+      success: true,
+      message: `Dependency finding '${title}' created successfully`,
+      report_id: report.id,
+      severity: cvss.severity,
+      cve,
+    });
+  },
+};
+
+const updateVulnerabilityReport: ToolDef = {
+  name: "update_vulnerability_report",
+  label: "Update Vulnerability Report",
+  description: `Revise a report you (or another agent on this scan) already filed.
+
+This is not deduplication. Use it when new evidence changes the finding — a higher/lower severity, a corrected PoC, a refined fix. A finding keeps its class: a dynamic finding cannot gain dependency metadata, and a dependency finding never carries endpoint/method/PoC — file that proof as its own vulnerability report instead.`,
+  parameters: {
+    type: "object",
+    properties: {
+      report_id: S("The report id to revise."),
+      update_reason: S("Why this revision — what new evidence prompted it."),
+      ...Object.fromEntries(UPDATE_TEXT_FIELDS.map((f) => [f, OPT_S("")])),
+      confidence: { ...OPT_S("high | medium | low"), enum: ["high", "medium", "low"] },
+      fix_effort: { ...OPT_S("trivial | low | medium | high"), enum: ["trivial", "low", "medium", "high"] },
+      cvss_breakdown: CVSS_BREAKDOWN_SCHEMA,
+      cve: OPT_S(""), cwe: OPT_S(""),
+      code_locations: { type: "array", items: { type: "object" } },
+      http_exchange_ids: { type: "array", items: { type: "string" } },
+    },
+    required: ["report_id", "update_reason"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const p = params as Record<string, unknown>;
+    const reportId = str(p, "report_id");
+    const reason = str(p, "update_reason").trim();
+    if (!reason) return json({ success: false, error: "update_reason is required" });
+    const report = getReport(dir, reportId);
+    if (!report) return json({ success: false, error: `Report with id '${reportId}' not found`, report_id: reportId });
+
+    const errors: string[] = [];
+    const changes: Record<string, unknown> = {};
+    for (const name of UPDATE_TEXT_FIELDS) {
+      const v = strOrNull(p, name);
+      if (v !== null) changes[name] = v;
+    }
+    const confidence = strOrNull(p, "confidence")?.toLowerCase();
+    if (confidence !== undefined && confidence !== null) {
+      if (!VALID_CONFIDENCE.has(confidence)) {
+        errors.push(`Invalid confidence: '${confidence}'. Must be one of: high, medium, low`);
+      } else {
+        changes.confidence = confidence;
+      }
+    }
+    const fixEffort = strOrNull(p, "fix_effort")?.toLowerCase();
+    if (fixEffort !== undefined && fixEffort !== null) {
+      if (!VALID_FIX_EFFORT.has(fixEffort)) {
+        errors.push(`Invalid fix_effort: '${fixEffort}'. Must be one of: trivial, low, medium, high`);
+      } else {
+        changes.fix_effort = fixEffort;
+      }
+    }
+    if (p.cvss_breakdown !== undefined) {
+      errors.push(...validateCvssBreakdown(p.cvss_breakdown));
+      if (!errors.length) {
+        const cvss = cvssBaseScore(p.cvss_breakdown as Record<string, string>);
+        if (typeof cvss === "string") {
+          errors.push(cvss);
+        } else {
+          changes.cvss_breakdown = p.cvss_breakdown;
+          changes.cvss = cvss.score;
+          changes.severity = cvss.severity;
+        }
+      }
+    }
+    if (p.code_locations !== undefined) {
+      const locations = normalizeCodeLocations(p.code_locations);
+      if (locations) {
+        errors.push(...validateCodeLocations(locations));
+        errors.push(...validateFixVerification(locations, (changes.fix_verification as string) ?? null));
+        changes.code_locations = locations;
+      } else {
+        errors.push("code_locations were dropped as unusable - every location needs a relative 'file' and an integer 'start_line'");
+      }
+    }
+    const { cve, cwe, errors: idErrors } = validateIdentifiers(strOrNull(p, "cve"), strOrNull(p, "cwe"));
+    errors.push(...idErrors);
+    if (cve) changes.cve = cve;
+    if (cwe) changes.cwe = cwe;
+    if (Array.isArray(p.http_exchange_ids)) changes.http_exchange_ids = p.http_exchange_ids;
+    if (errors.length) return json({ success: false, error: "Validation failed", errors, report_id: reportId });
+    if (!Object.keys(changes).length) {
+      return json({ success: false, error: `Report '${reportId}' already says this - nothing in your update changes it`, report_id: reportId });
+    }
+
+    // Keep the revision inside the finding's class.
+    const cls = findingClassOf(report);
+    const foreign = cls === "dynamic" ? DEPENDENCY_ONLY_UPDATE_FIELDS : DYNAMIC_ONLY_UPDATE_FIELDS;
+    const offending = [...foreign].filter((f) => f in changes);
+    if (offending.length) {
+      return json({
+        success: false,
+        error: `Report '${reportId}' is a ${cls} finding, so it cannot carry ${offending.join(", ")}. File your proof as its own vulnerability report instead of writing it onto this one.`,
+        report_id: reportId,
+        finding_class: cls,
+        rejected_fields: offending,
+      });
+    }
+    // A dependency finding is re-rated through its contextual CVSS.
+    if (cls === "dependency_cve" && "cvss_breakdown" in changes) {
+      const reasoning = (changes.contextual_cvss_reasoning as string) ?? "";
+      if (!reasoning.trim()) {
+        return json({
+          success: false,
+          error: "contextual_cvss_reasoning is required: a dependency finding is re-rated with the cvss_breakdown observed in this codebase together with the reasoning a reader can check",
+          report_id: reportId,
+        });
+      }
+      const meta = { ...((report.dependency_metadata as Record<string, unknown>) ?? {}) };
+      meta.contextual_cvss_breakdown = changes.cvss_breakdown;
+      meta.contextual_cvss_score = changes.cvss;
+      meta.contextual_cvss_reasoning = reasoning.slice(0, MAX_CONTEXTUAL_REASONING);
+      changes.dependency_metadata = meta;
+    }
+
+    Object.assign(report, changes);
+    report.updatedAt = new Date().toISOString();
+    report.revisions.push({
+      at: report.updatedAt,
+      agent: callerAgent(ctx),
+      reason,
+      fields: Object.keys(changes).sort(),
+    });
+    putReport(dir, report);
+    return json({
+      success: true,
+      action: "updated",
+      message: `Report '${reportId}' now carries your revision. Do not file it again.`,
+      report_id: reportId,
+      updated_fields: Object.keys(changes).sort(),
+      severity: report.severity,
+      cvss_score: report.cvss,
+    });
+  },
+};
+
+const listReportsTool: ToolDef = {
+  name: "list_reports",
+  label: "List Vulnerability Reports",
+  description: `List the findings filed so far in this scan — compact rows, not full bodies.
+
+Returns each report's id, title, severity, cvss, confidence, finding_class, cve/cwe, target, endpoint/method, fix_effort, agent, and timestamp. Use it to see what is already filed before reporting (avoid duplicates) and before finishing the scan.`,
+  parameters: { type: "object", properties: {} },
+  async execute() {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const reports = listReports(dir).map((r) => ({
+      id: r.id,
+      title: r.title,
+      severity: r.severity,
+      cvss: r.cvss,
+      confidence: r.confidence,
+      finding_class: findingClassOf(r),
+      cve: r.cve,
+      cwe: r.cwe,
+      target: r.target,
+      endpoint: r.endpoint,
+      method: r.method,
+      fix_effort: r.fix_effort,
+      agent_name: r.agent,
+      timestamp: r.createdAt,
+    }));
+    return json({ success: true, count: reports.length, reports });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// finish_scan — assemble the final report and end the scan
+// ---------------------------------------------------------------------------
+
+const finishScan: ToolDef = {
+  name: "finish_scan",
+  label: "Finish Scan",
+  description: `Close the scan and write the final report.
+
+Call only when testing is complete: every hypothesis resolved, coverage reconciled, findings filed. Assembles final-report.json in the scan directory from the reports, coverage ledger, and threat models, marks the scan finished, and tears down the sandbox.
+
+Before calling: list_reports to confirm what was filed, and list_coverage(outcome="needs_follow_up") to confirm nothing is still open.`,
+  parameters: {
+    type: "object",
+    properties: {
+      executive_summary: S("Short summary of the scan's outcome for the report header."),
+    },
+    required: ["executive_summary"],
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const scan = activeScan();
+    const reports = listReports(dir);
+    const coverage = listCoverage(dir);
+    const open = coverage.filter((e) => e.outcome === "needs_follow_up");
+    const payload = {
+      scan_id: scan?.scanId ?? null,
+      target: scan?.target ?? null,
+      scan_mode: scan?.scanMode ?? null,
+      started_at: scan?.startedAt ?? null,
+      finished_at: new Date().toISOString(),
+      executive_summary: str(params, "executive_summary"),
+      findings: reports,
+      coverage,
+      open_follow_ups: open,
+    };
+    writeFinalReport(dir, payload);
+    endScan();
+    markSandboxActive(false);
+    await stopSandbox();
+    return json({
+      success: true,
+      message: "Scan finished. Final report written.",
+      report_path: join(dir, "final-report.json"),
+      findings: reports.length,
+      coverage_entries: coverage.length,
+      open_follow_ups: open.length,
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// registry
+// ---------------------------------------------------------------------------
+const getReportTool: ToolDef = {
+  name: "get_report",
+  label: "Get Report",
+  description: `Read one filed finding in full by its id.
+
+Returns the complete report body — description, technical analysis, PoC, evidence, remediation, code locations, revision history. Use list_reports first to find the id.`,
+  parameters: {
+    type: "object",
+    properties: { report_id: S("Report id from list_reports.") },
+    required: ["report_id"],
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const report = getReport(dir, str(params, "report_id"));
+    if (!report) return json({ success: false, error: `Report '${str(params, "report_id")}' not found` });
+    return json({ success: true, report });
+  },
+};
+
+export const STRIX_TOOLS: ToolDef[] = [
+  think,
+  loadSkill,
+  createNote,
+  listNotesTool,
+  getNoteTool,
+  updateNote,
+  deleteNote,
+  recordCoverage,
+  updateCoverage,
+  listCoverageTool,
+  getThreatModelTool,
+  saveThreatModel,
+  amendThreatModel,
+  createVulnerabilityReport,
+  createDependencyReport,
+  updateVulnerabilityReport,
+  listReportsTool,
+  getReportTool,
+  finishScan,
+];
