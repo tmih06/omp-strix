@@ -1,0 +1,172 @@
+/**
+ * Sandboxed execution for strix mode — replaces strix's dedicated sandbox
+ * image with a locally built one (sandbox/Dockerfile, essential pentest
+ * tools preinstalled). STRIX_SANDBOX_IMAGE overrides the image name; when
+ * set to anything other than the default it is pulled instead of built.
+ *
+ * While a scan is active, `bash` tool calls are rewritten to `docker exec`
+ * into the container. The session cwd is mounted at /workspace so file
+ * tools and shell commands see the same tree — same model as strix's
+ * shared container. STRIX_SANDBOX=off disables sandboxing entirely.
+ */
+
+import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const NAME = "omp-strix-sandbox";
+const WORKSPACE = "/workspace";
+const DEFAULT_IMAGE = "omp-strix-sandbox";
+const STATE_DIR = join(homedir(), ".omp", "agent", "strix");
+const ACTIVE_FILE = join(STATE_DIR, "active.json");
+const DOCKERFILE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "sandbox");
+
+export function sandboxImage(): string {
+  return process.env.STRIX_SANDBOX_IMAGE?.trim() || DEFAULT_IMAGE;
+}
+
+function run(
+  args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { promise, resolve } = Promise.withResolvers<{
+    code: number;
+    stdout: string;
+    stderr: string;
+  }>();
+  execFile("docker", args, { timeout: 900_000 }, (err, stdout, stderr) => {
+    const code = err && typeof err.code === "number" ? err.code : err ? 1 : 0;
+    resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+  });
+  return promise;
+}
+
+export async function dockerAvailable(): Promise<boolean> {
+  if (process.env.STRIX_SANDBOX === "off") return false;
+  const res = await run(["version", "--format", "{{.Server.Version}}"]);
+  return res.code === 0;
+}
+
+async function containerRunning(): Promise<boolean> {
+  const res = await run(["inspect", "-f", "{{.State.Running}}", NAME]);
+  return res.code === 0 && res.stdout.trim() === "true";
+}
+
+/**
+ * Ensure the sandbox container exists and is running, with `cwd` mounted
+ * at /workspace. Returns an error string on failure.
+ */
+export async function ensureSandbox(cwd: string): Promise<string | null> {
+  if (await containerRunning()) return null;
+  await run(["rm", "-f", NAME]); // stale container: recreate so mount matches cwd
+
+  const image = sandboxImage();
+  const inspect = await run(["image", "inspect", image]);
+  if (inspect.code !== 0) {
+    if (image === DEFAULT_IMAGE) {
+      const build = await run(["build", "-t", image, DOCKERFILE_DIR]);
+      if (build.code !== 0) {
+        return `docker build ${image} failed: ${build.stderr.trim() || build.stdout.trim()}`;
+      }
+    } else {
+      const pull = await run(["pull", image]);
+      if (pull.code !== 0) {
+        return `docker pull ${image} failed: ${pull.stderr.trim() || pull.stdout.trim()}`;
+      }
+    }
+  }
+
+  const res = await run([
+    "run",
+    "-d",
+    "--name",
+    NAME,
+    "--cap-add",
+    "NET_RAW",
+    "--network",
+    "host",
+    "-v",
+    `${cwd}:${WORKSPACE}`,
+    "-w",
+    WORKSPACE,
+    image,
+    "sleep",
+    "infinity",
+  ]);
+  if (res.code !== 0) {
+    return `docker run failed: ${res.stderr.trim() || res.stdout.trim()}`;
+  }
+  return null;
+}
+
+export async function stopSandbox(): Promise<void> {
+  await run(["rm", "-f", NAME]);
+}
+
+export function markSandboxActive(on: boolean): void {
+  try {
+    const active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
+    active.sandbox = on;
+    mkdirSync(STATE_DIR, { recursive: true });
+    writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
+  } catch {
+    /* no active scan file yet */
+  }
+}
+
+interface ActiveSandbox {
+  workspaceRoot: string; // host path mounted at /workspace
+}
+
+export function activeSandbox(): ActiveSandbox | null {
+  try {
+    const active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as {
+      sandbox?: boolean;
+      workspaceRoot?: string;
+    };
+    if (!active.sandbox) return null;
+    return { workspaceRoot: active.workspaceRoot ?? "" };
+  } catch {
+    return null;
+  }
+}
+
+export function recordSandbox(workspaceRoot: string): void {
+  try {
+    const active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
+    active.sandbox = true;
+    active.workspaceRoot = workspaceRoot;
+    writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
+  } catch {
+    /* no active scan file yet */
+  }
+}
+
+/**
+ * Rewrite a bash tool call to run inside the sandbox container.
+ * Returns the new input object, or null when the call shouldn't be rewritten.
+ */
+export function rewriteBashInput(input: Record<string, unknown>): Record<string, unknown> | null {
+  const sb = activeSandbox();
+  if (!sb) return null;
+
+  const command = input.command;
+  if (typeof command !== "string" || command.trim() === "") return null;
+  // Already sandboxed (e.g. agent deliberately nesting docker calls).
+  if (/^\s*docker\s/.test(command)) return null;
+
+  // Map the requested cwd into the /workspace mount. Paths outside the
+  // mounted root fall back to the mount root.
+  const requested = typeof input.cwd === "string" ? input.cwd : sb.workspaceRoot;
+  const innerCwd = requested.startsWith(sb.workspaceRoot)
+    ? join(WORKSPACE, requested.slice(sb.workspaceRoot.length))
+    : WORKSPACE;
+  const b64 = Buffer.from(command, "utf8").toString("base64");
+  // Single-quoted so the host shell never sees the inner operators; the
+  // container's sh decodes and evals the original command verbatim.
+  const wrapped = `cd ${innerCwd} && eval "$(echo ${b64} | base64 -d)"`;
+  const execArgs = ["docker", "exec", NAME, "sh", "-c", `'${wrapped}'`];
+
+  return { ...input, command: execArgs.join(" "), cwd: undefined };
+}
