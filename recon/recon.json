@@ -1,0 +1,521 @@
+{
+ "fingerprint": {
+  "status": 200,
+  "server": "nginx/1.31.6",
+  "x-powered-by": "PHP/8.5.10",
+  "cookies": "PHPSESSID=f27745a407a1a989653d50fa0ed20503; expires=Tue, 22 Sep 2026 20:16:23 GMT; Max-Age=86400; path=/",
+  "title": "Welcome :: Damn Vulnerable Web Application (DVWA)"
+ },
+ "common_files": {
+  "/robots.txt": {
+   "status": 200,
+   "len": 25,
+   "ctype": "text/plain",
+   "preview": "User-agent: *\nDisallow: /"
+  },
+  "/.htaccess": {
+   "status": 403,
+   "len": 323,
+   "ctype": "text/html; charset=iso-8859-1",
+   "preview": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html><head>\n<title>403 Forbi"
+  },
+  "/phpinfo.php": {
+   "status": 200,
+   "len": 87006,
+   "ctype": "text/html; charset=UTF-8",
+   "preview": "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"DTD/xhtml1-transitional.dtd\">\n<html xmlns=\"http://www.w3"
+  },
+  "/server-status": {
+   "status": 403,
+   "len": 323,
+   "ctype": "text/html; charset=iso-8859-1",
+   "preview": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html><head>\n<title>403 Forbi"
+  },
+  "/README.md": {
+   "status": 200,
+   "len": 25293,
+   "ctype": "text/markdown",
+   "preview": "# DAMN VULNERABLE WEB APPLICATION\n\nDamn Vulnerable Web Application (DVWA) is a PHP/MySQL web application that is damn vu"
+  },
+  "/docs/": {
+   "status": 403,
+   "len": 323,
+   "ctype": "text/html; charset=iso-8859-1",
+   "preview": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html><head>\n<title>403 Forbi"
+  },
+  "/setup.php": {
+   "status": 200,
+   "len": 5152,
+   "ctype": "text/html;charset=utf-8",
+   "preview": "<!DOCTYPE html>\n\n<html lang=\"en-GB\">\n\n\t<head>\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\n\n\t"
+  },
+  "/external/": {
+   "status": 403,
+   "len": 323,
+   "ctype": "text/html; charset=iso-8859-1",
+   "preview": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html><head>\n<title>403 Forbi"
+  },
+  "/security.txt": {
+   "status": 200,
+   "len": 151,
+   "ctype": "text/plain",
+   "preview": "The clue is in its name, DVWA contains both intentional and unintentional vulnerabliities, that is it's whole point, ple"
+  },
+  "/CHANGELOG.md": {
+   "status": 200,
+   "len": 7134,
+   "ctype": "text/markdown",
+   "preview": "DAMN VULNERABLE WEB APPLICATION\n=======================\n\nv1.10 (*Not Yet Released)\n======\n\n+ Improved IIS support. (@g0t"
+  }
+ },
+ "endpoints": {
+  "/": {
+   "status": 200,
+   "len": 6040,
+   "ctype": "text/html",
+   "depth": 0
+  },
+  "/index.php": {
+   "status": 200,
+   "len": 5930,
+   "ctype": "text/html",
+   "depth": 0
+  },
+  "/dvwa/js/dvwaPage.js": {
+   "status": 200,
+   "len": 1030,
+   "ctype": "text/javascript",
+   "depth": 1
+  },
+  "/instructions.php": {
+   "status": 200,
+   "len": 32379,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/setup.php": {
+   "status": 200,
+   "len": 5152,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/brute/": {
+   "status": 200,
+   "len": 4153,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/exec/": {
+   "status": 200,
+   "len": 4093,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/csrf/": {
+   "status": 200,
+   "len": 5359,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/fi/?page=include.php": {
+   "status": 200,
+   "len": 4094,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/upload/": {
+   "status": 200,
+   "len": 3986,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/captcha/": {
+   "status": 200,
+   "len": 4701,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/sqli/": {
+   "status": 200,
+   "len": 4064,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/sqli_blind/": {
+   "status": 200,
+   "len": 4131,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/weak_id/": {
+   "status": 200,
+   "len": 3427,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/xss_d/": {
+   "status": 200,
+   "len": 4612,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/xss_r/": {
+   "status": 200,
+   "len": 4216,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/xss_s/": {
+   "status": 200,
+   "len": 435,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/csp/": {
+   "status": 200,
+   "len": 4131,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/javascript/": {
+   "status": 200,
+   "len": 8289,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/vulnerabilities/open_redirect/": {
+   "status": 200,
+   "len": 4241,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/security.php": {
+   "status": 200,
+   "len": 4486,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/phpinfo.php": {
+   "status": 200,
+   "len": 87469,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/about.php": {
+   "status": 200,
+   "len": 5198,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/logout.php": {
+   "status": 302,
+   "len": 0,
+   "ctype": "text/html",
+   "depth": 1
+  },
+  "/dvwa/js/add_event_listeners.js": {
+   "status": 200,
+   "len": 593,
+   "ctype": "text/javascript",
+   "depth": 1
+  },
+  "/instructions.php?doc=readme": {
+   "status": 200,
+   "len": 32456,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/instructions.php?doc=PDF": {
+   "status": 200,
+   "len": 3169,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/instructions.php?doc=changelog": {
+   "status": 200,
+   "len": 11163,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/instructions.php?doc=copying": {
+   "status": 200,
+   "len": 36134,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/README.ar.md": {
+   "status": 200,
+   "len": 25027,
+   "ctype": "text/markdown",
+   "depth": 2
+  },
+  "/README.zh.md": {
+   "status": 200,
+   "len": 17394,
+   "ctype": "text/markdown",
+   "depth": 2
+  },
+  "/README.fr.md": {
+   "status": 200,
+   "len": 20674,
+   "ctype": "text/markdown",
+   "depth": 2
+  },
+  "/README.fa.md": {
+   "status": 200,
+   "len": 30612,
+   "ctype": "text/markdown",
+   "depth": 2
+  },
+  "/README.pt.md": {
+   "status": 200,
+   "len": 21239,
+   "ctype": "text/markdown",
+   "depth": 2
+  },
+  "/README.es.md": {
+   "status": 200,
+   "len": 21777,
+   "ctype": "text/markdown",
+   "depth": 2
+  },
+  "/README.tr.md": {
+   "status": 200,
+   "len": 19838,
+   "ctype": "text/markdown",
+   "depth": 2
+  },
+  "/compose.yml": {
+   "status": 404,
+   "len": 320,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/vulnerabilities/fi/?page=file1.php": {
+   "status": 200,
+   "len": 4094,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/vulnerabilities/fi/?page=file2.php": {
+   "status": 200,
+   "len": 4131,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/vulnerabilities/fi/?page=file3.php": {
+   "status": 200,
+   "len": 4248,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/vulnerabilities/open_redirect/source/low.php?redirect=info.php?id=1": {
+   "status": 302,
+   "len": 0,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/vulnerabilities/open_redirect/source/low.php?redirect=info.php?id=2": {
+   "status": 302,
+   "len": 0,
+   "ctype": "text/html",
+   "depth": 2
+  },
+  "/docs/DVWA_v1.3.pdf": {
+   "status": 200,
+   "len": 422011,
+   "ctype": "application/pdf",
+   "depth": 3
+  }
+ },
+ "forms": [
+  {
+   "page": "/setup.php",
+   "action": "/setup.php",
+   "method": "GET",
+   "inputs": [
+    "create_db",
+    "user_token"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/brute/",
+   "action": "/vulnerabilities/brute/",
+   "method": "GET",
+   "inputs": [
+    "username",
+    "password",
+    "Login"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/exec/",
+   "action": "/vulnerabilities/exec/",
+   "method": "GET",
+   "inputs": [
+    "ip",
+    "Submit"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/csrf/",
+   "action": "/vulnerabilities/csrf/",
+   "method": "GET",
+   "inputs": [
+    "password_new",
+    "password_conf",
+    "Change"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/upload/",
+   "action": "/vulnerabilities/upload/",
+   "method": "GET",
+   "inputs": [
+    "MAX_FILE_SIZE",
+    "uploaded",
+    "Upload"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/captcha/",
+   "action": "/vulnerabilities/captcha/",
+   "method": "GET",
+   "inputs": [
+    "step",
+    "password_new",
+    "password_conf",
+    "Change"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/sqli/",
+   "action": "/vulnerabilities/sqli/",
+   "method": "GET",
+   "inputs": [
+    "id",
+    "Submit"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/sqli_blind/",
+   "action": "/vulnerabilities/sqli_blind/",
+   "method": "GET",
+   "inputs": [
+    "id",
+    "Submit"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/weak_id/",
+   "action": "/vulnerabilities/weak_id/",
+   "method": "GET",
+   "inputs": []
+  },
+  {
+   "page": "/vulnerabilities/xss_d/",
+   "action": "/vulnerabilities/xss_d/",
+   "method": "GET",
+   "inputs": [
+    "default"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/xss_r/",
+   "action": "/vulnerabilities/xss_r/",
+   "method": "GET",
+   "inputs": [
+    "name"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/csp/",
+   "action": "/vulnerabilities/csp/",
+   "method": "GET",
+   "inputs": [
+    "include"
+   ]
+  },
+  {
+   "page": "/vulnerabilities/javascript/",
+   "action": "/vulnerabilities/javascript/",
+   "method": "GET",
+   "inputs": [
+    "token",
+    "phrase",
+    "send"
+   ]
+  },
+  {
+   "page": "/security.php",
+   "action": "/security.php",
+   "method": "GET",
+   "inputs": [
+    "security",
+    "seclev_submit",
+    "user_token"
+   ]
+  }
+ ],
+ "js": [
+  "/dvwa/js/add_event_listeners.js",
+  "/dvwa/js/dvwaPage.js"
+ ],
+ "cookies_seen": {},
+ "params": {
+  "/vulnerabilities/fi/": [
+   [
+    "page",
+    "file1.php"
+   ],
+   [
+    "page",
+    "file2.php"
+   ],
+   [
+    "page",
+    "file3.php"
+   ],
+   [
+    "page",
+    "include.php"
+   ]
+  ],
+  "/instructions.php": [
+   [
+    "doc",
+    "PDF"
+   ],
+   [
+    "doc",
+    "changelog"
+   ],
+   [
+    "doc",
+    "copying"
+   ],
+   [
+    "doc",
+    "readme"
+   ]
+  ],
+  "/vulnerabilities/open_redirect/source/low.php": [
+   [
+    "redirect",
+    "info.php?id=1"
+   ],
+   [
+    "redirect",
+    "info.php?id=2"
+   ]
+  ]
+ },
+ "login_attempt": {
+  "status": 302,
+  "location": "setup.php"
+ },
+ "stats": {
+  "pages": 43,
+  "elapsed": 62.0
+ }
+}
