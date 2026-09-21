@@ -1,0 +1,2440 @@
+{
+ "results": {
+  "robots.txt": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/robots.txt",
+   "size": 25,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/plain",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "sitemap.xml": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/sitemap.xml",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  ".git/HEAD": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/.git/HEAD",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  ".git/config": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/.git/config",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  ".env": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/.env",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  ".htaccess": {
+   "status": 403,
+   "final": "https://pentest-ground.com:4280/.htaccess",
+   "size": 323,
+   "title": "403 Forbidden",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "composer.json": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/composer.json",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "package.json": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/package.json",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "README.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.md",
+   "size": 25293,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [
+    "https://github.com/digininja/DVWA/graphs/contributors"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "CHANGELOG.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/CHANGELOG.md",
+   "size": 7134,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "COPYING.txt": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/COPYING.txt",
+   "size": 32485,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/plain",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "login.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/login.php",
+   "size": 1395,
+   "title": "Login :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "login.php",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "username",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "password",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "Login",
+       "type": "submit",
+       "value": "Login"
+      },
+      {
+       "name": "user_token",
+       "type": "hidden",
+       "value": "801bcc8c10258c58c049c9a87100ab92"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "https://github.com/digininja/DVWA/"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "setup.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/setup.php",
+   "size": 5152,
+   "title": "Setup :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "create_db",
+       "type": "submit",
+       "value": "Create / Reset Database"
+      },
+      {
+       "name": "user_token",
+       "type": "hidden",
+       "value": "56f77ce9069c1699fc5af8a43433788b"
+      }
+     ]
+    }
+   ],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "security.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/security.php",
+   "size": 4486,
+   "title": "DVWA Security :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "security",
+       "type": "",
+       "value": ""
+      },
+      {
+       "name": "seclev_submit",
+       "type": "submit",
+       "value": "Submit"
+      },
+      {
+       "name": "user_token",
+       "type": "hidden",
+       "value": "6f76baa7809a789c910f711d6bede08d"
+      }
+     ]
+    }
+   ],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "phpinfo.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/phpinfo.php",
+   "size": 87351,
+   "title": "PHP 8.5.10 - phpinfo()",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=UTF-8",
+   "forms": [],
+   "links": [
+    "https://www.php.net/",
+    "https://www.zend.com/",
+    "#module_apache2handler",
+    "#module_core",
+    "#module_ctype",
+    "#module_curl",
+    "#module_date",
+    "#module_dom",
+    "#module_fileinfo",
+    "#module_filter",
+    "#module_gd",
+    "#module_hash",
+    "#module_iconv",
+    "#module_json",
+    "#module_lexbor",
+    "#module_libxml",
+    "#module_mbstring",
+    "#module_mysqli",
+    "#module_mysqlnd",
+    "#module_openssl",
+    "#module_pcre",
+    "#module_pdo",
+    "#module_pdo_mysql",
+    "#module_pdo_sqlite",
+    "#module_phar",
+    "#module_posix",
+    "#module_random",
+    "#module_reflection",
+    "#module_session",
+    "#module_simplexml",
+    "#module_sodium",
+    "#module_spl",
+    "#module_sqlite3",
+    "#module_standard",
+    "#module_tokenizer",
+    "#module_uri",
+    "#module_xml",
+    "#module_xmlreader",
+    "#module_xmlwriter",
+    "#module_zend+opcache",
+    "#module_zlib"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "instructions.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/instructions.php",
+   "size": 32379,
+   "title": "Instructions :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "?doc=readme",
+    "?doc=PDF",
+    "?doc=changelog",
+    "?doc=copying",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://www.gnu.org/licenses/",
+    "README.ar.md",
+    "README.zh.md",
+    "README.fr.md",
+    "README.fa.md",
+    "README.pt.md",
+    "README.es.md",
+    "README.tr.md",
+    "https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes",
+    "https://github.com/digininja/DVWA/archive/master.zip",
+    "https://www.youtube.com/watch?v=WkyDxNJkgQ4",
+    "https://youtu.be/Yzksa_WjnY0",
+    "https://www.youtube.com/watch?v=cak2lQvBRAo",
+    "https://www.apachefriends.org/",
+    "https://youtu.be/Yzksa_WjnY0",
+    "https://github.com/hoang-himself",
+    "https://github.com/JGillam",
+    "https://github.com/digininja/DVWA/pkgs/container/dvwa",
+    "https://docs.docker.com/engine/install/#server",
+    "https://docs.docker.com/engine/install/ubuntu/#uninstall-old-versions",
+    "https://docs.docker.com/engine/install/fedora/#uninstall-old-versions",
+    "https://www.docker.com/support",
+    "#download",
+    "#i-want-to-run-dvwa-on-a-different-port",
+    "https://github.com/compose-spec/compose-spec/blob/master/05-services.md#pull_policy\n",
+    "https://www.howtogeek.com/205086/beginner-how-to-make-windows-show-file-extensions/",
+    "https://secure.php.net/manual/en/filesystem.configuration.php#ini.allow-url-include",
+    "https://secure.php.net/manual/en/filesystem.configuration.php#ini.allow-url-fopen",
+    "https://secure.php.net/manual/en/errorfunc.configuration.php#ini.display-errors",
+    "https://secure.php.net/manual/en/errorfunc.configuration.php#ini.display-startup-errors",
+    "https://www.google.com/recaptcha/admin/create",
+    "http://127.0.0.1/login.php",
+    "./compose.yml",
+    "./compose.yml",
+    "#database-setup",
+    "https://mariadb.com/resources/blog/how-to-migrate-from-mysql-to-mariadb-on-linux-in-five-steps/",
+    "https://www.php.net/manual/en/mysqli.requirements.php",
+    "https://www.ryadel.com/en/fix-mysql-server-gone-away-packets-order-similar-mysql-related-errors/",
+    "https://github.com/digininja/DVWA/issues",
+    "https://youtu.be/V4MATqtdxss",
+    "https://github.com/digininja/DVWA/graphs/contributors",
+    "https://nvd.nist.gov/vuln/detail/CVE-2023-39848",
+    "https://github.com/digininja/DVWA"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "about.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/about.php",
+   "size": 5198,
+   "title": "About :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://github.com/digininja/DVWA",
+    "https://github.com/digininja/DVWA/issues",
+    "https://github.com/digininja/DVWA/wiki",
+    "http://brooksgarrett.com/",
+    "https://blog.g0tmi1k.com/",
+    "https://www.creativenucleus.com/",
+    "https://wpscan.com/",
+    "http://www.paulosyibelo.com/",
+    "http://tedi.heriyanto.net/",
+    "https://digi.ninja/",
+    "https://github.com/songzy12/"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "logout.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/login.php",
+   "size": 1441,
+   "title": "Login :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "login.php",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "username",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "password",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "Login",
+       "type": "submit",
+       "value": "Login"
+      },
+      {
+       "name": "user_token",
+       "type": "hidden",
+       "value": "60fa14090c10869cbab5b1b88e3b04bb"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "https://github.com/digininja/DVWA/"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "docs/": {
+   "status": 403,
+   "final": "https://pentest-ground.com:4280/docs/",
+   "size": 323,
+   "title": "403 Forbidden",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "config/": {
+   "status": 403,
+   "final": "https://pentest-ground.com:4280/config/",
+   "size": 323,
+   "title": "403 Forbidden",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "config/config.inc.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/config/config.inc.php",
+   "size": 0,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=UTF-8",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "config/config.inc.php.dist": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/config/config.inc.php.dist",
+   "size": 2186,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "application/vnd.apple.installer+xml",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  ".DS_Store": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/.DS_Store",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "server-status": {
+   "status": 403,
+   "final": "https://pentest-ground.com:4280/server-status",
+   "size": 323,
+   "title": "403 Forbidden",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "api/": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/api/",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "swagger.json": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/swagger.json",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "openapi.json": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/openapi.json",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "wp-login.php": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/wp-login.php",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "admin/": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/admin/",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "test.php": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/test.php",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "info.php": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/info.php",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "phpmyadmin/": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/phpmyadmin/",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "external/": {
+   "status": 403,
+   "final": "https://pentest-ground.com:4280/external/",
+   "size": 323,
+   "title": "403 Forbidden",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "dvwa/": {
+   "status": 403,
+   "final": "https://pentest-ground.com:4280/dvwa/",
+   "size": 323,
+   "title": "403 Forbidden",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "vulnerabilities/": {
+   "status": 403,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/",
+   "size": 323,
+   "title": "403 Forbidden",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "ids_log.php": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/ids_log.php",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  ".well-known/security.txt": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/.well-known/security.txt",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "crossdomain.xml": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/crossdomain.xml",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "favicon.ico": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/favicon.ico",
+   "size": 1406,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "image/vnd.microsoft.icon",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/instructions.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/instructions.php",
+   "size": 32379,
+   "title": "Instructions :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "?doc=readme",
+    "?doc=PDF",
+    "?doc=changelog",
+    "?doc=copying",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://www.gnu.org/licenses/",
+    "README.ar.md",
+    "README.zh.md",
+    "README.fr.md",
+    "README.fa.md",
+    "README.pt.md",
+    "README.es.md",
+    "README.tr.md",
+    "https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes",
+    "https://github.com/digininja/DVWA/archive/master.zip",
+    "https://www.youtube.com/watch?v=WkyDxNJkgQ4",
+    "https://youtu.be/Yzksa_WjnY0",
+    "https://www.youtube.com/watch?v=cak2lQvBRAo",
+    "https://www.apachefriends.org/",
+    "https://youtu.be/Yzksa_WjnY0",
+    "https://github.com/hoang-himself",
+    "https://github.com/JGillam",
+    "https://github.com/digininja/DVWA/pkgs/container/dvwa",
+    "https://docs.docker.com/engine/install/#server",
+    "https://docs.docker.com/engine/install/ubuntu/#uninstall-old-versions",
+    "https://docs.docker.com/engine/install/fedora/#uninstall-old-versions",
+    "https://www.docker.com/support",
+    "#download",
+    "#i-want-to-run-dvwa-on-a-different-port",
+    "https://github.com/compose-spec/compose-spec/blob/master/05-services.md#pull_policy\n",
+    "https://www.howtogeek.com/205086/beginner-how-to-make-windows-show-file-extensions/",
+    "https://secure.php.net/manual/en/filesystem.configuration.php#ini.allow-url-include",
+    "https://secure.php.net/manual/en/filesystem.configuration.php#ini.allow-url-fopen",
+    "https://secure.php.net/manual/en/errorfunc.configuration.php#ini.display-errors",
+    "https://secure.php.net/manual/en/errorfunc.configuration.php#ini.display-startup-errors",
+    "https://www.google.com/recaptcha/admin/create",
+    "http://127.0.0.1/login.php",
+    "./compose.yml",
+    "./compose.yml",
+    "#database-setup",
+    "https://mariadb.com/resources/blog/how-to-migrate-from-mysql-to-mariadb-on-linux-in-five-steps/",
+    "https://www.php.net/manual/en/mysqli.requirements.php",
+    "https://www.ryadel.com/en/fix-mysql-server-gone-away-packets-order-similar-mysql-related-errors/",
+    "https://github.com/digininja/DVWA/issues",
+    "https://youtu.be/V4MATqtdxss",
+    "https://github.com/digininja/DVWA/graphs/contributors",
+    "https://nvd.nist.gov/vuln/detail/CVE-2023-39848",
+    "https://github.com/digininja/DVWA"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/setup.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/setup.php",
+   "size": 5152,
+   "title": "Setup :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "create_db",
+       "type": "submit",
+       "value": "Create / Reset Database"
+      },
+      {
+       "name": "user_token",
+       "type": "hidden",
+       "value": "68b43a6bdaf162c4a8a823a527983c6e"
+      }
+     ]
+    }
+   ],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/brute/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/brute/",
+   "size": 4153,
+   "title": "Vulnerability: Brute Force :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "GET",
+     "inputs": [
+      {
+       "name": "username",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "password",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "Login",
+       "type": "submit",
+       "value": "Login"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://owasp.org/www-community/attacks/Brute_force_attack",
+    "http://www.symantec.com/connect/articles/password-crackers-ensuring-security-your-password",
+    "https://www.golinuxcloud.com/brute-force-attack-web-forms"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/exec/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/exec/",
+   "size": 4093,
+   "title": "Vulnerability: Command Injection :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "ip",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "Submit",
+       "type": "submit",
+       "value": "Submit"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://www.scribd.com/doc/2530476/Php-Endangers-Remote-Code-Execution",
+    "http://www.ss64.com/bash/",
+    "http://www.ss64.com/nt/",
+    "https://owasp.org/www-community/attacks/Command_Injection"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/csrf/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/csrf/",
+   "size": 5359,
+   "title": "Vulnerability: Cross Site Request Forgery (CSRF) :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "GET",
+     "inputs": [
+      {
+       "name": "password_new",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "password_conf",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "Change",
+       "type": "submit",
+       "value": "Change"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://web.dev/samesite-cookies-explained/",
+    "https://chromestatus.com/feature/5088147346030592",
+    "https://docs.microsoft.com/en-us/microsoft-edge/web-platform/site-impacting-changes",
+    "https://hacks.mozilla.org/2020/08/changes-to-samesite-cookie-behavior/",
+    "https://owasp.org/www-community/attacks/csrf",
+    "http://www.cgisecurity.com/csrf-faq.html",
+    "https://en.wikipedia.org/wiki/Cross-site_request_forgery "
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/fi/?page=include.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/fi/?page=include.php",
+   "size": 4094,
+   "title": "Vulnerability: File Inclusion :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "?page=file1.php",
+    "?page=file2.php",
+    "?page=file3.php",
+    "https://en.wikipedia.org/wiki/Remote_File_Inclusion",
+    "https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/07-Input_Validation_Testing/11.1-Testing_for_Local_File_Inclusion",
+    "https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/07-Input_Validation_Testing/11.2-Testing_for_Remote_File_Inclusion"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/upload/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/upload/",
+   "size": 3986,
+   "title": "Vulnerability: File Upload :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "MAX_FILE_SIZE",
+       "type": "hidden",
+       "value": "100000"
+      },
+      {
+       "name": "uploaded",
+       "type": "file",
+       "value": ""
+      },
+      {
+       "name": "Upload",
+       "type": "submit",
+       "value": "Upload"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload",
+    "https://www.acunetix.com/websitesecurity/upload-forms-threat/"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/captcha/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/captcha/",
+   "size": 4701,
+   "title": "Vulnerability: Insecure CAPTCHA :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "step",
+       "type": "hidden",
+       "value": "1"
+      },
+      {
+       "name": "password_new",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "password_conf",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "Change",
+       "type": "submit",
+       "value": "Change"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://www.google.com/recaptcha/admin/create",
+    "https://en.wikipedia.org/wiki/CAPTCHA",
+    "https://www.google.com/recaptcha/",
+    "https://owasp.org/www-project-automated-threats-to-web-applications/assets/oats/EN/OAT-009_CAPTCHA_Defeat"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "https://www.google.com/recaptcha/api.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/sqli/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/sqli/",
+   "size": 4064,
+   "title": "Vulnerability: SQL Injection :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "GET",
+     "inputs": [
+      {
+       "name": "id",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "Submit",
+       "type": "submit",
+       "value": "Submit"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://en.wikipedia.org/wiki/SQL_injection",
+    "https://www.netsparker.com/blog/web-security/sql-injection-cheat-sheet/",
+    "https://owasp.org/www-community/attacks/SQL_Injection",
+    "https://bobby-tables.com/"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/sqli_blind/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/sqli_blind/",
+   "size": 4131,
+   "title": "Vulnerability: SQL Injection (Blind) :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "GET",
+     "inputs": [
+      {
+       "name": "id",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "Submit",
+       "type": "submit",
+       "value": "Submit"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://en.wikipedia.org/wiki/SQL_injection",
+    "http://pentestmonkey.net/cheat-sheet/sql-injection/mysql-sql-injection-cheat-sheet",
+    "https://owasp.org/www-community/attacks/Blind_SQL_Injection",
+    "https://bobby-tables.com/"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/weak_id/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/weak_id/",
+   "size": 3427,
+   "title": "Vulnerability: Weak Session IDs :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "",
+       "type": "submit",
+       "value": "Generate"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/xss_d/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/xss_d/",
+   "size": 4612,
+   "title": "Vulnerability: DOM Based Cross Site Scripting (XSS) :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "",
+     "method": "GET",
+     "inputs": [
+      {
+       "name": "default",
+       "type": "",
+       "value": ""
+      },
+      {
+       "name": "",
+       "type": "submit",
+       "value": "Select"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://owasp.org/www-community/attacks/xss/",
+    "https://owasp.org/www-community/attacks/DOM_Based_XSS",
+    "https://www.acunetix.com/blog/articles/dom-xss-explained/"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/xss_r/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/xss_r/",
+   "size": 4216,
+   "title": "Vulnerability: Reflected Cross Site Scripting (XSS) :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "GET",
+     "inputs": [
+      {
+       "name": "name",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "",
+       "type": "submit",
+       "value": "Submit"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://owasp.org/www-community/attacks/xss/",
+    "https://owasp.org/www-community/xss-filter-evasion-cheatsheet",
+    "https://en.wikipedia.org/wiki/Cross-site_scripting",
+    "http://www.cgisecurity.com/xss-faq.html",
+    "http://www.scriptalert1.com/"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/xss_s/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/xss_s/",
+   "size": 435,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=UTF-8",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/vulnerabilities/csp/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/csp/",
+   "size": 4131,
+   "title": "Vulnerability: Content Security Policy (CSP) Bypass :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "include",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "",
+       "type": "submit",
+       "value": "Include"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://content-security-policy.com/",
+    "https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP",
+    "https://blog.mozilla.org/security/2014/10/04/csp-for-the-web-we-have/",
+    "https://twitter.com/digininja"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/javascript/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/javascript/",
+   "size": 8289,
+   "title": "Vulnerability: JavaScript Attacks :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "token",
+       "type": "hidden",
+       "value": ""
+      },
+      {
+       "name": "phrase",
+       "type": "text",
+       "value": "ChangeMe"
+      },
+      {
+       "name": "send",
+       "type": "submit",
+       "value": "Submit"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "https://www.w3schools.com/js/",
+    "https://www.youtube.com/watch?v=cs7EQdWO5o0&index=17&list=WL",
+    "https://ponyfoo.com/articles/es6-proxies-in-depth",
+    "https://twitter.com/digininja"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/vulnerabilities/open_redirect/": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/vulnerabilities/open_redirect/",
+   "size": 4241,
+   "title": "Vulnerability: Open HTTP Redirect :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    "../../.",
+    "../../instructions.php",
+    "../../setup.php",
+    "../../vulnerabilities/brute/",
+    "../../vulnerabilities/exec/",
+    "../../vulnerabilities/csrf/",
+    "../../vulnerabilities/fi/.?page=include.php",
+    "../../vulnerabilities/upload/",
+    "../../vulnerabilities/captcha/",
+    "../../vulnerabilities/sqli/",
+    "../../vulnerabilities/sqli_blind/",
+    "../../vulnerabilities/weak_id/",
+    "../../vulnerabilities/xss_d/",
+    "../../vulnerabilities/xss_r/",
+    "../../vulnerabilities/xss_s/",
+    "../../vulnerabilities/csp/",
+    "../../vulnerabilities/javascript/",
+    "../../vulnerabilities/open_redirect/",
+    "../../security.php",
+    "../../phpinfo.php",
+    "../../about.php",
+    "../../logout.php",
+    "source/low.php?redirect=info.php?id=1",
+    "source/low.php?redirect=info.php?id=2",
+    "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html",
+    "https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/11-Client-side_Testing/04-Testing_for_Client-side_URL_Redirect",
+    "https://cwe.mitre.org/data/definitions/601.html"
+   ],
+   "scripts": [
+    "../../dvwa/js/dvwaPage.js",
+    "../../dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/security.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/security.php",
+   "size": 4486,
+   "title": "DVWA Security :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "#",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "security",
+       "type": "",
+       "value": ""
+      },
+      {
+       "name": "seclev_submit",
+       "type": "submit",
+       "value": "Submit"
+      },
+      {
+       "name": "user_token",
+       "type": "hidden",
+       "value": "dc94fc9ba471dd0eb2218056b6568339"
+      }
+     ]
+    }
+   ],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/phpinfo.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/phpinfo.php",
+   "size": 87352,
+   "title": "PHP 8.5.10 - phpinfo()",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=UTF-8",
+   "forms": [],
+   "links": [
+    "https://www.php.net/",
+    "https://www.zend.com/",
+    "#module_apache2handler",
+    "#module_core",
+    "#module_ctype",
+    "#module_curl",
+    "#module_date",
+    "#module_dom",
+    "#module_fileinfo",
+    "#module_filter",
+    "#module_gd",
+    "#module_hash",
+    "#module_iconv",
+    "#module_json",
+    "#module_lexbor",
+    "#module_libxml",
+    "#module_mbstring",
+    "#module_mysqli",
+    "#module_mysqlnd",
+    "#module_openssl",
+    "#module_pcre",
+    "#module_pdo",
+    "#module_pdo_mysql",
+    "#module_pdo_sqlite",
+    "#module_phar",
+    "#module_posix",
+    "#module_random",
+    "#module_reflection",
+    "#module_session",
+    "#module_simplexml",
+    "#module_sodium",
+    "#module_spl",
+    "#module_sqlite3",
+    "#module_standard",
+    "#module_tokenizer",
+    "#module_uri",
+    "#module_xml",
+    "#module_xmlreader",
+    "#module_xmlwriter",
+    "#module_zend+opcache",
+    "#module_zlib"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "/about.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/about.php",
+   "size": 5198,
+   "title": "About :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://github.com/digininja/DVWA",
+    "https://github.com/digininja/DVWA/issues",
+    "https://github.com/digininja/DVWA/wiki",
+    "http://brooksgarrett.com/",
+    "https://blog.g0tmi1k.com/",
+    "https://www.creativenucleus.com/",
+    "https://wpscan.com/",
+    "http://www.paulosyibelo.com/",
+    "http://tedi.heriyanto.net/",
+    "https://digi.ninja/",
+    "https://github.com/songzy12/"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/logout.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/login.php",
+   "size": 1441,
+   "title": "Login :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [
+    {
+     "action": "login.php",
+     "method": "POST",
+     "inputs": [
+      {
+       "name": "username",
+       "type": "text",
+       "value": ""
+      },
+      {
+       "name": "password",
+       "type": "password",
+       "value": ""
+      },
+      {
+       "name": "Login",
+       "type": "submit",
+       "value": "Login"
+      },
+      {
+       "name": "user_token",
+       "type": "hidden",
+       "value": "6b1ff08f4c0326f0878ae21b8d9ceeaa"
+      }
+     ]
+    }
+   ],
+   "links": [
+    "https://github.com/digininja/DVWA/"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "/?doc=readme": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/?doc=readme",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/?doc=PDF": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/?doc=PDF",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/?doc=changelog": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/?doc=changelog",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/?doc=copying": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/?doc=copying",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/README.ar.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.ar.md",
+   "size": 25027,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/README.zh.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.zh.md",
+   "size": 17394,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/README.fr.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.fr.md",
+   "size": 20674,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/README.fa.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.fa.md",
+   "size": 30612,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/README.pt.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.pt.md",
+   "size": 21239,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [
+    "https://github.com/digininja/DVWA/graphs/contributors"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "/README.es.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.es.md",
+   "size": 21777,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [
+    "https://github.com/digininja/DVWA/graphs/contributors"
+   ],
+   "scripts": [],
+   "location": ""
+  },
+  "/README.tr.md": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/README.tr.md",
+   "size": 19838,
+   "title": "",
+   "server": "nginx/1.31.6",
+   "ctype": "text/markdown",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/compose.yml": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/compose.yml",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/?page=file1.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/?page=file1.php",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/?page=file2.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/?page=file2.php",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/?page=file3.php": {
+   "status": 200,
+   "final": "https://pentest-ground.com:4280/?page=file3.php",
+   "size": 5930,
+   "title": "Welcome :: Damn Vulnerable Web Application (DVWA)",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html;charset=utf-8",
+   "forms": [],
+   "links": [
+    ".",
+    "instructions.php",
+    "setup.php",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/.?page=include.php",
+    "vulnerabilities/upload/",
+    "vulnerabilities/captcha/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/weak_id/",
+    "vulnerabilities/xss_d/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
+    "vulnerabilities/csp/",
+    "vulnerabilities/javascript/",
+    "vulnerabilities/open_redirect/",
+    "security.php",
+    "phpinfo.php",
+    "about.php",
+    "logout.php",
+    "https://www.virtualbox.org/",
+    "https://www.vmware.com/",
+    "https://www.apachefriends.org/",
+    "https://github.com/webpwnized/mutillidae",
+    "https://owasp.org/www-project-vulnerable-web-applications-directory"
+   ],
+   "scripts": [
+    "dvwa/js/dvwaPage.js",
+    "dvwa/js/add_event_listeners.js"
+   ],
+   "location": ""
+  },
+  "/source/low.php?redirect=info.php?id=1": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/source/low.php?redirect=info.php?id=1",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  },
+  "/source/low.php?redirect=info.php?id=2": {
+   "status": 404,
+   "final": "https://pentest-ground.com:4280/source/low.php?redirect=info.php?id=2",
+   "size": 320,
+   "title": "404 Not Found",
+   "server": "nginx/1.31.6",
+   "ctype": "text/html; charset=iso-8859-1",
+   "forms": [],
+   "links": [],
+   "scripts": [],
+   "location": ""
+  }
+ },
+ "js": {
+  "https://pentest-ground.com:4280/dvwa/js/add_event_listeners.js": {
+   "status": 200,
+   "size": 593
+  },
+  "https://www.google.com/recaptcha/api.js": {
+   "status": 200,
+   "size": 976
+  },
+  "https://pentest-ground.com:4280/dvwa/js/dvwaPage.js": {
+   "status": 200,
+   "size": 1030
+  }
+ },
+ "cookies": {
+  "security": "low",
+  "PHPSESSID": "ffb5b1dfda9cff7fc48bc76156a52eb7"
+ }
+}
