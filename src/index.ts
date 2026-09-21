@@ -8,6 +8,10 @@
  * writes the final report.
  */
 
+import { copyFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { buildSystemPrompt } from "./prompt";
 import {
@@ -31,6 +35,22 @@ interface StrixState {
 }
 
 const strix: StrixState = { active: false, systemPrompt: null, preTools: null };
+
+const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Copy the bundled theme into the agent themes dir so setTheme can find it. */
+function installTheme(): void {
+  try {
+    const themesDir = join(homedir(), ".omp", "agent", "themes");
+    mkdirSync(themesDir, { recursive: true });
+    copyFileSync(
+      join(PLUGIN_ROOT, "themes", "strix-red.json"),
+      join(themesDir, "strix-red.json"),
+    );
+  } catch {
+    /* theme install is best-effort */
+  }
+}
 
 function parseArgs(args: string): {
   target: string;
@@ -83,6 +103,7 @@ export default function (pi: ExtensionAPI) {
       const scan = beginScan(target, mode);
 
       // Sandbox: build/pull the image and start the shared container.
+      installTheme();
       let sandboxNote = "";
       if (await dockerAvailable()) {
         const err = await ensureSandbox(process.cwd());
