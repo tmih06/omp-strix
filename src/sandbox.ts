@@ -168,5 +168,7 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
   const wrapped = `cd ${innerCwd} && eval "$(echo ${b64} | base64 -d)"`;
   const execArgs = ["docker", "exec", NAME, "sh", "-c", `'${wrapped}'`];
 
-  return { ...input, command: execArgs.join(" "), cwd: undefined };
+  const out: Record<string, unknown> = { ...input, command: execArgs.join(" ") };
+  delete out.cwd; // key must be absent, not undefined — schema rejects undefined
+  return out;
 }
