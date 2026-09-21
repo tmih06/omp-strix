@@ -166,9 +166,13 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
   // Single-quoted so the host shell never sees the inner operators; the
   // container's sh decodes and evals the original command verbatim.
   const wrapped = `cd ${innerCwd} && eval "$(echo ${b64} | base64 -d)"`;
+  // If the container is gone, recreate it before exec. This is a sync
+  // rewrite so we can't await ensureSandbox; instead we prepend a
+  // conditional start that is a no-op when the container is already up.
+  const ensure = `docker start ${NAME} 2>/dev/null || docker run -d --name ${NAME} -v '${sb.workspaceRoot}:${WORKSPACE}' ${IMAGE} sleep infinity`;
   const execArgs = ["docker", "exec", NAME, "sh", "-c", `'${wrapped}'`];
 
-  const out: Record<string, unknown> = { ...input, command: execArgs.join(" ") };
+  const out: Record<string, unknown> = { ...input, command: `${ensure} && ${execArgs.join(" ")}` };
   delete out.cwd; // key must be absent, not undefined — schema rejects undefined
   return out;
 }
