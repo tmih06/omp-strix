@@ -13,24 +13,21 @@ omp plugin install github:you/omp-strix   # from git
 ## Usage
 
 ```
-/strix <target> [--mode quick|standard|deep] [--whitebox] [--diff]
-/strix-off
+/strix        # toggle on
+/strix        # toggle off
 ```
 
-- `/strix https://app.example.com` — black-box scan of a live target
-- `/strix . --whitebox` — source-aware scan of the current repo
-- `/strix . --diff` — scan only the current diff
-- `/strix-off` — end the mode, restore tools, remove the sandbox
+`/strix` turns strix mode on. Name the target and depth (`quick` / `standard` / `deep`) in your next message — the first prompt after activation is captured as the scan target and starts the scan. `/strix` again turns it off.
 
 On activation the plugin:
 
 1. Builds the strix system prompt (root-agent orchestration + methodology + skills catalog) and installs it via `before_agent_start`.
-2. Builds the `omp-strix-sandbox` docker image on first use (Debian slim + nmap, masscan, gobuster, sqlmap, hydra, john, python3, …) and starts a shared container with the session cwd mounted at `/workspace`.
-3. Activates the strix toolset (19 tools, `defaultInactive` until then).
-4. Rewrites every `bash` tool call to `docker exec` into the sandbox.
-5. Switches to the `strix-red` theme and names the session `strix: <target>`.
+2. Activates the strix toolset (19 tools, `defaultInactive` until then).
+3. Switches to the `strix-red` theme and names the session `strix`.
 
-`finish_scan` (or `/strix-off`, or session shutdown) writes `final-report.json` into the scan dir and tears the container down.
+On the first `bash` call the plugin builds the `omp-strix-sandbox` docker image (Debian slim + nmap, masscan, gobuster, sqlmap, hydra, john, python3, …) and starts a shared container with the session cwd mounted at `/workspace`; every `bash` call is rewritten to `docker exec` into it.
+
+`finish_scan` (or `/strix` off, or session shutdown) writes `final-report.json` into the scan dir and tears the container down.
 
 ## Tools
 
