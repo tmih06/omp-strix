@@ -12,6 +12,7 @@
     "muted": "#a07878",
     "dim": "#6b4a4a",
     "ok": "#4ade80",
+    "borderMuted": "#3a1a20",
     "warn": "#fbbf24",
     "cyan": "#67e8f9",
     "violet": "#c4b5fd"
