@@ -86,6 +86,21 @@ export const strixBash = {
     },
     required: ["command"],
   },
+  // Renders the call as `▣ <command>` when the sandbox is active — the
+  // icon marks container execution; `$` prefix on the host path.
+  renderCall(args: Record<string, unknown>) {
+    const cmd = typeof args?.command === "string" ? args.command : "";
+    const sandboxed = activeSandbox() !== null && !/^\s*docker\s/.test(cmd);
+    const icon = sandboxed ? "▣" : "$";
+    const lines = cmd.split("\n");
+    return {
+      render(width: number): readonly string[] {
+        return lines
+          .map((l, i) => (i === 0 ? `${icon} ${l}` : `   ${l}`))
+          .map((l) => (l.length > width ? l.slice(0, width) : l));
+      },
+    };
+  },
   async execute(
     _id: string,
     params: Record<string, unknown>,
