@@ -325,7 +325,10 @@ export default function (pi: ExtensionAPI) {
       strix.systemPrompt = buildSystemPrompt({ sandbox: strix.sandboxEnabled });
       const preTools = pi.getActiveTools();
       strix.preTools = preTools;
-      await pi.setActiveTools([...preTools, ...TOOL_NAMES]);
+      // Strip `goal` from the active set: goal mode injects a continuation
+      // steer on every turn end, which forces the agent to keep polling
+      // instead of sleeping until subagent completions arrive.
+      await pi.setActiveTools([...preTools.filter((t) => t !== "goal"), ...TOOL_NAMES]);
       strix.active = true;
 
       const themeResult = await ctx.ui.setTheme("strix-red");
