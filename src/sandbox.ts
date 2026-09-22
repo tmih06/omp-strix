@@ -159,11 +159,22 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
 
   const command = input.command;
   if (typeof command !== "string" || command.trim() === "") return null;
-  // Already sandboxed (e.g. agent deliberately nesting docker calls).
+  // Direct `docker exec <sandbox> sh -c '...'` (subagents sometimes bypass the
+  // routing): inject umask so files stay host-writable. Other docker commands
+  // (start/run/logs) pass through untouched.
+  const directExec = command.match(/docker\s+exec\s+(?:-\S+\s+)*omp-strix-sandbox\s+sh\s+-c\s+'/);
+  if (directExec) {
+    if (command.includes("umask")) return null;
+    const out: Record<string, unknown> = {
+      ...input,
+      command: command.replace(directExec[0], `${directExec[0]}umask 000; `),
+    };
+    delete out.cwd;
+    return out;
+  }
+  // Other docker commands (start/run/logs) pass through untouched.
   if (/^\s*docker\s/.test(command)) return null;
-
   // Map the requested cwd into the /workspace mount. Paths outside the
-  // mounted root fall back to the mount root.
   const requested = typeof input.cwd === "string" ? input.cwd : sb.workspaceRoot;
   const inside = requested === sb.workspaceRoot || requested.startsWith(`${sb.workspaceRoot}/`);
   const innerCwd = inside ? join(WORKSPACE, requested.slice(sb.workspaceRoot.length)) : WORKSPACE;
