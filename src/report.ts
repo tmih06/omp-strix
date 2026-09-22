@@ -261,3 +261,180 @@ export function renderFinalReportMarkdown(payload: FinalReportPayload): string {
   }
   return lines.join("\n");
 }
+
+// ── SARIF 2.1.0 export ──────────────────────────────────────────────────────
+
+/** OWASP Top 10 (2021) taxa for SARIF reporting relationships. */
+const OWASP_TAXA = [
+  { id: "A01", name: "Broken Access Control" },
+  { id: "A02", name: "Cryptographic Failures" },
+  { id: "A03", name: "Injection" },
+  { id: "A04", name: "Insecure Design" },
+  { id: "A05", name: "Security Misconfiguration" },
+  { id: "A06", name: "Vulnerable and Outdated Components" },
+  { id: "A07", name: "Identification and Authentication Failures" },
+  { id: "A08", name: "Software and Data Integrity Failures" },
+  { id: "A09", name: "Security Logging and Monitoring Failures" },
+  { id: "A10", name: "Server-Side Request Forgery" },
+] as const;
+
+/** Map a finding's CWE/title to an OWASP Top 10 taxon id. */
+function owaspTaxon(report: Report): string {
+  const cwe = s(report.cwe) ?? "";
+  const text = `${s(report.title) ?? ""} ${s(report.description) ?? ""}`.toLowerCase();
+  const byCwe: Record<string, string> = {
+    "CWE-79": "A03", "CWE-89": "A03", "CWE-78": "A03", "CWE-94": "A03",
+    "CWE-90": "A03", "CWE-91": "A03", "CWE-917": "A03", "CWE-1336": "A03",
+    "CWE-918": "A10", "CWE-22": "A01", "CWE-23": "A01", "CWE-639": "A01",
+    "CWE-287": "A07", "CWE-306": "A07", "CWE-384": "A07", "CWE-798": "A07",
+    "CWE-352": "A01", "CWE-862": "A01", "CWE-863": "A01", "CWE-200": "A01",
+    "CWE-502": "A08", "CWE-1104": "A06", "CWE-1395": "A06",
+    "CWE-327": "A02", "CWE-328": "A02", "CWE-326": "A02", "CWE-916": "A02",
+    "CWE-16": "A05", "CWE-1004": "A05", "CWE-1021": "A05",
+  };
+  if (byCwe[cwe]) return byCwe[cwe];
+  if (/ssrf|server.side request/i.test(text)) return "A10";
+  if (/idor|bola|bfla|access control|authoriz|privilege/i.test(text)) return "A01";
+  if (/inject|xss|sqli|ssti|xxe|deserializ/i.test(text)) return "A03";
+  if (/auth|jwt|session|credential|password|oauth/i.test(text)) return "A07";
+  if (/crypto|hash|encrypt|random|secret/i.test(text)) return "A02";
+  if (/dependenc|cve-|supply chain|package/i.test(text)) return "A06";
+  if (/misconfig|header|cors|default cred/i.test(text)) return "A05";
+  return "A04";
+}
+
+const SARIF_LEVEL: Record<string, string> = {
+  critical: "error",
+  high: "error",
+  medium: "warning",
+  low: "note",
+  info: "note",
+  informational: "note",
+};
+
+interface SarifLocation {
+  physicalLocation: {
+    artifactLocation: { uri: string };
+    region?: { startLine: number; endLine?: number; snippet?: { text: string } };
+  };
+}
+
+function sarifLocations(report: Report): SarifLocation[] {
+  const out: SarifLocation[] = [];
+  const locs = Array.isArray(report.code_locations) ? report.code_locations : [];
+  for (const raw of locs) {
+    const loc = rec(raw);
+    if (!loc) continue;
+    const file = s(loc.file);
+    if (!file) continue;
+    const startLine = n(loc.start_line) ?? 1;
+    const endLine = n(loc.end_line) ?? undefined;
+    const snippet = s(loc.snippet);
+    out.push({
+      physicalLocation: {
+        artifactLocation: { uri: file.replace(/\\/g, "/") },
+        region: {
+          startLine,
+          ...(endLine && endLine !== startLine ? { endLine } : {}),
+          ...(snippet ? { snippet: { text: snippet.slice(0, 500) } } : {}),
+        },
+      },
+    });
+  }
+  // Synthetic fallback: HTTP-only/black-box findings get a webRequest location
+  // so GitHub code scanning doesn't drop them.
+  if (out.length === 0) {
+    const endpoint = s(report.endpoint) ?? s(report.target);
+    if (endpoint) {
+      const method = s(report.method) ?? "GET";
+      out.push({
+        physicalLocation: {
+          artifactLocation: { uri: endpoint.replace(/\\/g, "/") },
+          region: { startLine: 1, snippet: { text: `${method} ${endpoint}` } },
+        },
+      });
+    }
+  }
+  return out;
+}
+
+/** Render the scan's findings as a SARIF 2.1.0 log. */
+export function renderSarif(payload: FinalReportPayload): string {
+  const findings = payload.findings ?? [];
+  const rules = new Map<string, { id: string; name: string; cwe: string | null }>();
+  const results = findings.map((r) => {
+    const cwe = s(r.cwe);
+    const ruleId = cwe ?? owaspTaxon(r);
+    if (!rules.has(ruleId)) {
+      rules.set(ruleId, {
+        id: ruleId,
+        name: (s(r.title) ?? "finding").slice(0, 80),
+        cwe,
+      });
+    }
+    const sev = (s(r.severity) ?? "medium").toLowerCase();
+    return {
+      ruleId,
+      level: SARIF_LEVEL[sev] ?? "warning",
+      message: {
+        text: [
+          `**${s(r.title) ?? "untitled"}** (${sev.toUpperCase()}, CVSS ${n(r.cvss) ?? "?"})`,
+          "",
+          s(r.description) ?? "",
+          "",
+          s(r.evidence) ? `Evidence: ${s(r.evidence)}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      },
+      locations: sarifLocations(r),
+      partialFingerprints: {
+        "strix/reportId": s(r.id) ?? "",
+        "strix/title": (s(r.title) ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+      },
+      properties: {
+        severity: sev,
+        cvss: n(r.cvss),
+        confidence: s(r.confidence),
+        verification_method: s(r.verification_method),
+        "security-severity": String(n(r.cvss) ?? ""),
+        tags: ["security", owaspTaxon(r), ...(cwe ? [cwe] : [])],
+      },
+    };
+  });
+
+  const log = {
+    $schema: "https://json.schemastore.org/sarif-2.1.0.json",
+    version: "2.1.0",
+    runs: [
+      {
+        tool: {
+          driver: {
+            name: "omp-strix",
+            version: "0.1.24",
+            informationUri: "https://github.com/tmih06/omp-strix",
+            rules: [...rules.values()].map((r) => ({
+              id: r.id,
+              name: r.name,
+              properties: { tags: ["security", ...(r.cwe ? [r.cwe] : [])] },
+            })),
+          },
+        },
+        taxonomies: [
+          {
+            taxon: OWASP_TAXA.map((t) => ({ id: t.id, name: t.name })),
+            name: "OWASP",
+            version: "2021",
+          },
+        ],
+        results,
+        properties: {
+          scan_id: payload.scan_id,
+          target: payload.target,
+          scan_mode: payload.scan_mode,
+        },
+      },
+    ],
+  };
+  return JSON.stringify(log, null, 2);
+}

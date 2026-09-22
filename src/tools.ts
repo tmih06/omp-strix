@@ -12,6 +12,7 @@ import { markSandboxActive, stopSandbox } from "./sandbox";
 import type { Report } from "./state";
 import {
   activeScan,
+  addArtifact,
   addCoverage,
   addNote,
   addReport,
@@ -19,10 +20,12 @@ import {
   collectSubagentMetrics,
   deleteFile,
   endScan,
+  findArtifact,
   findCoverage,
   getNote,
   getReport,
   getThreatModel,
+  listArtifacts,
   listCoverage,
   listNotes,
   listReports,
@@ -801,6 +804,125 @@ function findDuplicate(dir: string, title: string, target: string): Report | nul
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// claim-consistency gates — the report tool is the choke point every filed
+// finding passes through, so it enforces that the claim matches the proof.
+// ---------------------------------------------------------------------------
+
+/** How the finding was proven. 'reflected'/'observed' cannot carry classes
+ *  that require server-side effect. */
+const VERIFICATION_METHODS = [
+  "exploited",
+  "time_based",
+  "data_extracted",
+  "callback_received",
+  "error_based",
+  "state_changed",
+  "reflected",
+  "manual_verified",
+] as const;
+
+/** CWE classes that a mere reflection/observation can never prove. */
+const NON_REFLECTABLE_CWES = new Set([
+  "CWE-918", // SSRF
+  "CWE-78", // OS command injection
+  "CWE-94", // code injection
+  "CWE-89", // SQLi
+  "CWE-639", // IDOR / authz
+  "CWE-287", // auth bypass
+  "CWE-22", // path traversal
+  "CWE-502", // deserialization
+]);
+
+/** Phrases that mark a simulated/hypothetical proof — never a filed finding. */
+const FABRICATION_PATTERNS = [
+  /\bsimulat(ed|ion|e)\b/i,
+  /\bfor demonstration purposes?\b/i,
+  /\bhypothetic(al|ally)\b/i,
+  /\bmock(ed|ing)?\b/i,
+  /\bassuming (?:we have |already )?(?:admin|root|authenticated) access\b/i,
+  /\bwould (?:probably|likely) (?:work|succeed|execute)\b/i,
+  /\bif this were vulnerable\b/i,
+];
+
+/** Evidence keywords required for CVSS impact claims. */
+const IMPACT_EVIDENCE = {
+  integrity_high:
+    /\b(modified|deleted|created|wrote|overwrit|escalat\w*|takeover|password changed|state change|inserted|updated)\b/i,
+  availability_high:
+    /\b(crash|crashed|outage|shutdown|denial|exhaust\w*|rce|command execution|code execution|unresponsive|oom)\b/i,
+  confidentiality_high:
+    /\b(extract\w*|dump\w*|exfiltrat\w*|\/etc\/passwd|\/etc\/shadow|password hash|credential|token|secret|union select|information_schema|@@version|uid=|root:|169\.254\.169\.254|metadata\.google|interactsh|oast|callback received)\b/i,
+};
+
+/** SQLi claims need SQL-native proof, not a shell transcript from another bug. */
+const SQLI_NATIVE_EVIDENCE =
+  /\b(sql|union select|information_schema|@@version|select .* from|sqlmap|syntax error|mysql|postgres|sqlite|ora-\d+|odbc|jdbc|query)\b/i;
+const RCE_TRANSCRIPT =
+  /\b(uid=|gid=|\/bin\/(ba)?sh|uname -a|whoami|id;|command execution|rce)\b/i;
+
+function claimConsistencyErrors(
+  p: Record<string, unknown>,
+  cwe: string | null,
+): string[] {
+  const errors: string[] = [];
+  const corpus = [
+    str(p, "evidence"),
+    str(p, "poc_script_code"),
+    str(p, "technical_analysis"),
+    str(p, "impact"),
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  for (const pat of FABRICATION_PATTERNS) {
+    if (pat.test(corpus)) {
+      errors.push(
+        `Evidence contains simulation/hypothetical language (${pat}) — file only demonstrated findings; hypotheses belong in notes`,
+      );
+      break;
+    }
+  }
+
+  const method = strOrNull(p, "verification_method");
+  if (method && !(VERIFICATION_METHODS as readonly string[]).includes(method)) {
+    errors.push(
+      `Invalid verification_method: '${method}'. Must be one of: ${VERIFICATION_METHODS.join(", ")}`,
+    );
+  }
+  if (method === "reflected" && cwe && NON_REFLECTABLE_CWES.has(cwe)) {
+    errors.push(
+      `verification_method 'reflected' cannot prove ${cwe} — this class requires a server-side effect (data returned, state change, OOB callback, or differential timing)`,
+    );
+  }
+
+  const b = (p.cvss_breakdown ?? {}) as Record<string, unknown>;
+  if (b.integrity === "H" && !IMPACT_EVIDENCE.integrity_high.test(corpus)) {
+    errors.push(
+      "cvss integrity:H requires demonstrated state change — evidence must show data modified/deleted/created, privilege escalation, or takeover",
+    );
+  }
+  if (b.availability === "H" && !IMPACT_EVIDENCE.availability_high.test(corpus)) {
+    errors.push(
+      "cvss availability:H requires demonstrated service impact — crash, outage, resource exhaustion, or code execution",
+    );
+  }
+  if (b.confidentiality === "H" && !IMPACT_EVIDENCE.confidentiality_high.test(corpus)) {
+    errors.push(
+      "cvss confidentiality:H requires extracted sensitive data — credentials, tokens, /etc/passwd, DB rows, or proven RCE/SQLi",
+    );
+  }
+
+  const isSqli =
+    cwe === "CWE-89" || /\bsql\s*injection\b|\bsqli\b/i.test(String(p.title ?? ""));
+  if (isSqli && RCE_TRANSCRIPT.test(corpus) && !SQLI_NATIVE_EVIDENCE.test(corpus)) {
+    errors.push(
+      "SQLi claim lacks SQL-native evidence — proof shows command-execution output only; data dumped via a different RCE bug does not prove SQL injection",
+    );
+  }
+  return errors;
+}
+
 const CVSS_BREAKDOWN_SCHEMA = {
   type: "object",
   properties: Object.fromEntries(Object.keys(CVSS_VALID).map((k) => [k, { type: "string" }])),
@@ -838,6 +960,10 @@ If you get a duplicate_of response, do NOT retry — move on to other testing.`,
       severity_change_conditions: S("The one concrete piece of evidence that would move the severity."),
       fix_effort: { ...S("trivial | low | medium | high"), enum: ["trivial", "low", "medium", "high"] },
       cvss_breakdown: CVSS_BREAKDOWN_SCHEMA,
+      verification_method: {
+        ...S("How the finding was proven: " + VERIFICATION_METHODS.join(", ")),
+        enum: [...VERIFICATION_METHODS],
+      },
       endpoint: OPT_S("Affected endpoint, if any."),
       method: OPT_S("HTTP method, if any."),
       cve: OPT_S("CVE id, if any."),
@@ -900,6 +1026,7 @@ If you get a duplicate_of response, do NOT retry — move on to other testing.`,
     errors.push(...validateFixVerification(locations, strOrNull(p, "fix_verification")));
     const { cve, cwe, errors: idErrors } = validateIdentifiers(strOrNull(p, "cve"), strOrNull(p, "cwe"));
     errors.push(...idErrors);
+    errors.push(...claimConsistencyErrors(p, cwe));
     if (errors.length) return json({ success: false, error: "Validation failed", errors });
 
     const cvss = cvssBaseScore(toCvssMetrics(p.cvss_breakdown as Record<string, unknown>));
@@ -947,6 +1074,7 @@ If you get a duplicate_of response, do NOT retry — move on to other testing.`,
       method: strOrNull(p, "method"),
       cve,
       cwe,
+      verification_method: strOrNull(p, "verification_method"),
       code_locations: locations,
       fix_verification: strOrNull(p, "fix_verification"),
       fix_pr_body: strOrNull(p, "fix_pr_body"),
@@ -1319,6 +1447,7 @@ Returns each report's id, title, severity, cvss, confidence, finding_class, cve/
       cve: r.cve,
       cwe: r.cwe,
       target: r.target,
+
       endpoint: r.endpoint,
       method: r.method,
       fix_effort: r.fix_effort,
@@ -1332,6 +1461,78 @@ Returns each report's id, title, severity, cvss, confidence, finding_class, cve/
 };
 
 // ---------------------------------------------------------------------------
+// artifacts — harvested credentials, tokens, and object references
+// ---------------------------------------------------------------------------
+
+const ARTIFACT_KINDS = ["credential", "object_ref", "session", "token", "key", "other"];
+
+const recordArtifact: ToolDef = {
+  name: "record_artifact",
+  label: "Record Artifact",
+  description: `Record a harvested artifact — a credential, session token, API key, or object reference (user id, tenant id, document UUID) captured during the scan.
+
+Artifacts are shared across every agent in the scan: a token captured by recon is replayable by hunters for BOLA/IDOR sweeps; an object id harvested from one response is the key to testing sibling endpoints. Record them as you find them — never leave them buried in notes.
+
+Kinds: credential (username/password, hash), session (cookie, session id), token (JWT, bearer, API key), key (private key, signing secret), object_ref (UUID, numeric id, hash identifying a resource), other.`,
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { ...S("One of: " + ARTIFACT_KINDS.join(", ")), enum: ARTIFACT_KINDS },
+      value: S("The artifact value — the token, hash, id, or credential."),
+      source: S("Where it was captured — endpoint, file, response, note id."),
+      scope: S("What it authenticates or identifies — user, role, tenant, endpoint scope."),
+    },
+    required: ["kind", "value", "source", "scope"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const kind = str(params, "kind").toLowerCase();
+    if (!ARTIFACT_KINDS.includes(kind)) {
+      return json({ success: false, error: `Invalid kind '${kind}'. Must be one of: ${ARTIFACT_KINDS.join(", ")}` });
+    }
+    const value = str(params, "value").trim();
+    const source = str(params, "source").trim();
+    const scope = str(params, "scope").trim();
+    if (!value || !source || !scope) {
+      return json({ success: false, error: "value, source, and scope are required" });
+    }
+    const dup = findArtifact(dir, kind, value, scope);
+    if (dup) {
+      return json({ success: true, artifact_id: dup.id, duplicate: true });
+    }
+    const art = addArtifact(dir, { kind, value, source, scope, agent: callerAgent(ctx) });
+    return json({ success: true, artifact_id: art.id });
+  },
+};
+
+const listArtifactsTool: ToolDef = {
+  name: "list_artifacts",
+  label: "List Artifacts",
+  description: `List harvested artifacts — credentials, tokens, sessions, object references — captured so far in this scan. Filter by kind. Use before BOLA/IDOR sweeps and authenticated replay.`,
+  parameters: {
+    type: "object",
+    properties: {
+      kind: OPT_S("Optional kind filter: " + ARTIFACT_KINDS.join(", ")),
+    },
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const kind = strOrNull(params, "kind")?.toLowerCase() ?? undefined;
+    const arts = listArtifacts(dir, kind).map((a) => ({
+      artifact_id: a.id,
+      kind: a.kind,
+      value: a.value.length > 120 ? `${a.value.slice(0, 120)}…` : a.value,
+      source: a.source,
+      scope: a.scope,
+      agent_name: a.agent,
+    }));
+    return json({ success: true, count: arts.length, artifacts: arts });
+  },
+};
+
+// ---------------------------------------------------------------------------
 // finish_scan — assemble the final report and end the scan
 // ---------------------------------------------------------------------------
 
@@ -1341,11 +1542,17 @@ const finishScan: ToolDef = {
   description: `Close the scan and write the final report.
 
 Call only when testing is complete: every hypothesis resolved, coverage reconciled, findings filed. Assembles final-report.json plus a human-readable final-report.md in the scan directory from the reports, coverage ledger, and threat models, marks the scan finished, and tears down the sandbox. Each filed report also carries a sibling .md next to its .json under reports/.
+GATE: the call is REJECTED while any coverage entry is still needs_follow_up, or while a findings note carries concrete exploit proof (uid=, /etc/passwd, union select, OOB callback, …) that was never filed as a report. Resolve them first — or pass force=true to close with the gaps disclosed in the report.
 Before calling: list_reports to confirm what was filed, and list_coverage(outcome="needs_follow_up") to confirm nothing is still open.`,
   parameters: {
     type: "object",
     properties: {
       executive_summary: S("Short summary of the scan's outcome for the report header."),
+      force: {
+        type: "boolean",
+        description:
+          "Set true to finish despite open follow-ups or unfiled proven findings — the gaps are disclosed in the report instead of blocking.",
+      },
     },
     required: ["executive_summary"],
   },
@@ -1356,6 +1563,42 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     const reports = listReports(dir);
     const coverage = listCoverage(dir);
     const open = coverage.filter((e) => e.outcome === "needs_follow_up");
+    const force = (params as Record<string, unknown>).force === true;
+
+    // Gatekeeper (xalgorix-style): a scan may not close while the ledger has
+    // open follow-ups, or while notes carry concrete exploit proof that was
+    // never filed as a report. force=true overrides and discloses the gaps.
+    const PROOF_MARKER =
+      /\b(uid=|gid=|root:|\/etc\/passwd|\/etc\/shadow|union select|information_schema|@@version|interactsh|oast|callback received|169\.254\.169\.254|password hash|nt authority\\)\b/i;
+    const reportTitles = new Set(reports.map((r) => normalizeTitle(String(r.title ?? ""))));
+    const unfiled = listNotes(dir).filter(
+      (n) =>
+        n.category === "findings" &&
+        PROOF_MARKER.test(`${n.title}\n${n.content}`) &&
+        !reportTitles.has(normalizeTitle(n.title)),
+    );
+    if (!force && (open.length > 0 || unfiled.length > 0)) {
+      return json({
+        success: false,
+        error:
+          "Scan cannot finish: unresolved work remains. Resolve each item or call finish_scan with force=true to close with gaps disclosed.",
+        open_follow_ups: open.map((e) => ({
+          id: e.id,
+          surface: e.surface,
+          risk_area: e.riskArea,
+          evidence: String(e.evidence ?? "").slice(0, 200),
+        })),
+        unfiled_proven_findings: unfiled.map((n) => ({ note_id: n.id, title: n.title })),
+      });
+    }
+    const forcedGaps =
+      force && (open.length > 0 || unfiled.length > 0)
+        ? {
+            forced: true,
+            open_follow_ups: open.map((e) => ({ id: e.id, surface: e.surface, risk_area: e.riskArea })),
+            unfiled_proven_findings: unfiled.map((n) => ({ note_id: n.id, title: n.title })),
+          }
+        : null;
     const sm = ctx as {
       sessionManager?: {
         getUsageStatistics?: () => { totalTokens?: number; cost?: number };
@@ -1387,6 +1630,7 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
       findings: reports,
       coverage,
       open_follow_ups: open,
+      ...(forcedGaps ? { incomplete: forcedGaps } : {}),
     };
     writeFinalReport(dir, payload);
     endScan();
@@ -1394,12 +1638,16 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     await stopSandbox();
     return json({
       success: true,
-      message: "Scan finished. Final report written (JSON + Markdown).",
+      message: forcedGaps
+        ? "Scan finished with disclosed gaps (forced). Final report written (JSON + Markdown)."
+        : "Scan finished. Final report written (JSON + Markdown).",
+      report_sarif_path: join(dir, "final-report.sarif"),
       report_path: join(dir, "final-report.md"),
       report_json_path: join(dir, "final-report.json"),
       findings: reports.length,
       coverage_entries: coverage.length,
       open_follow_ups: open.length,
+      incomplete: forcedGaps ? true : undefined,
     });
   },
 };
@@ -1446,5 +1694,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   updateVulnerabilityReport,
   listReportsTool,
   getReportTool,
+  recordArtifact,
+  listArtifactsTool,
   finishScan,
 ];

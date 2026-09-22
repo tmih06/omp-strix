@@ -10,9 +10,11 @@
  */
 
 import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { activeSandbox, WORKSPACE } from "./sandbox";
+import { scanDir } from "./state";
 
 type Json = Record<string, unknown>;
 type ThemeLike = {
@@ -129,7 +131,92 @@ function containerCwd(requested: string | undefined, workspaceRoot: string): str
   if (requested.startsWith(`${workspaceRoot}/`)) {
     return join(WORKSPACE, requested.slice(workspaceRoot.length));
   }
+
   return WORKSPACE;
+}
+
+/** Save oversized output to the scan dir and return a bounded tail. */
+const CONTEXT_OUTPUT_CAP = 32 * 1024; // what the agent actually sees
+
+function boundOutput(
+  raw: string,
+  timedOut: boolean,
+  timeoutS: number,
+): { text: string; savedTo?: string } {
+  const suffix = timedOut ? `\n\n[command timed out after ${timeoutS}s — partial output shown]` : "";
+  if (raw.length <= CONTEXT_OUTPUT_CAP) {
+    return { text: (raw || "(no output)") + suffix };
+  }
+  let savedTo: string | undefined;
+  const dir = scanDir();
+  if (dir) {
+    const outDir = join(dir, "raw-output");
+    mkdirSync(outDir, { recursive: true });
+    const name = `cmd-${Date.now().toString(36)}.log`;
+    writeFileSync(join(outDir, name), raw, "utf8");
+    savedTo = join(outDir, name);
+  }
+  const head = raw.slice(0, 4 * 1024);
+  const tail = raw.slice(-CONTEXT_OUTPUT_CAP + 4 * 1024);
+  const omitted = raw.length - head.length - tail.length;
+  const note = savedTo
+    ? `full output saved to ${savedTo} — grep/read it for details`
+    : "output too large to save";
+  return {
+    text: `${head}\n\n[… ${Math.round(omitted / 1024)}KB omitted — ${note} …]\n\n${tail}${suffix}`,
+    savedTo,
+  };
+}
+
+/** Detect missing-tool failures and append an install hint. */
+const NOT_FOUND_RES = [
+  /(?:^|\s)([A-Za-z0-9._-]+):\s*(?:command )?not found/im,
+  /bash:\s*([A-Za-z0-9._-]+):\s*No such file or directory/i,
+  /No module named ['"]?([A-Za-z0-9._-]+)['"]?/im,
+  /ModuleNotFoundError:\s*No module named ['"]?([A-Za-z0-9._-]+)['"]?/im,
+];
+
+const INSTALL_HINTS: Record<string, string> = {
+  nuclei: "should be preinstalled — check PATH or reinstall image",
+  ffuf: "should be preinstalled — check PATH or reinstall image",
+  subfinder: "should be preinstalled — check PATH or reinstall image",
+  katana: "should be preinstalled — check PATH or reinstall image",
+  naabu: "should be preinstalled — check PATH or reinstall image",
+  semgrep: "pip3 install semgrep",
+  trivy: "should be preinstalled — check PATH or reinstall image",
+  gitleaks: "should be preinstalled — check PATH or reinstall image",
+  trufflehog: "should be preinstalled — check PATH or reinstall image",
+  nxc: "pip3 install netexec",
+  netexec: "pip3 install netexec",
+  impacket: "pip3 install impacket",
+  jwt_tool: "pip3 install jwt_tool",
+  dalfox: "should be preinstalled — check PATH or reinstall image",
+  feroxbuster: "should be preinstalled — check PATH or reinstall image",
+  rustscan: "should be preinstalled — check PATH or reinstall image",
+  gau: "should be preinstalled — check PATH or reinstall image",
+  waybackurls: "should be preinstalled — check PATH or reinstall image",
+  paramspider: "python3 /opt/paramspider/paramspider.py",
+  interactsh: "interactsh-client",
+  sg: "ast-grep binary is `sg`",
+  hurl: "should be preinstalled — check PATH or reinstall image",
+  prowler: "pip3 install prowler",
+  checkov: "pip3 install checkov",
+  hashcat: "apt-get install -y hashcat",
+  nikto: "apt-get install -y nikto",
+  wpscan: "apt-get install -y wpscan || gem install wpscan",
+  amass: "apt-get install -y amass || go install github.com/owasp-amass/amass/v4/...@latest",
+  x8: "cargo install x8 || download from github.com/Sh1Yo/x8/releases",
+};
+
+function missingToolHint(output: string): string | null {
+  for (const re of NOT_FOUND_RES) {
+    const m = re.exec(output);
+    if (!m?.[1]) continue;
+    const name = m[1].replace(/^['"]|['"]$/g, "");
+    const hint = INSTALL_HINTS[name] ?? `apt-get install -y ${name} || pip3 install ${name}`;
+    return `\n\n[tool missing: ${name} — ${hint}]`;
+  }
+  return null;
 }
 
 export function strixBash(pi: ExtensionAPI) {
@@ -329,37 +416,42 @@ export function strixBash(pi: ExtensionAPI) {
       const sb = activeSandbox();
       const isDockerCall = /^\s*docker\s/.test(command);
       const started = Date.now();
-
       if (sb && !isDockerCall) {
         // umask 000: the container runs as root — files it writes into the
         // /workspace mount must stay world-writable for the host user.
+        // bash -lc: login shell so user-installed tools (~/.local/bin,
+        // ~/go/bin, pipx) resolve — plain `sh -c` skips profile PATH.
         const inner = `umask 000; cd ${JSON.stringify(containerCwd(cwd, sb.workspaceRoot))} && ${command}`;
-        const res = await run(["docker", "exec", "omp-strix-sandbox", "sh", "-c", inner], {
-          timeoutS,
-          signal,
-        });
-        const suffix = res.timedOut ? `\n\n[command timed out after ${timeoutS}s]` : "";
+        const res = await run(
+          ["docker", "exec", "omp-strix-sandbox", "bash", "-lc", inner],
+          { timeoutS, signal },
+        );
+        const bounded = boundOutput(res.output, res.timedOut, timeoutS);
+        const hint = res.code !== 0 ? (missingToolHint(res.output) ?? "") : "";
         return {
-          content: [{ type: "text", text: (res.output || "(no output)") + suffix }],
+          content: [{ type: "text", text: bounded.text + hint }],
           details: {
             exitCode: res.code,
             timedOut: res.timedOut,
             sandboxed: true,
             durationMs: Date.now() - started,
+            ...(bounded.savedTo ? { savedTo: bounded.savedTo } : {}),
           },
         };
       }
 
       // Host path: no sandbox, or the agent deliberately issued a docker command.
       const res = await run(["bash", "-c", command], { cwd, timeoutS, signal });
-      const suffix = res.timedOut ? `\n\n[command timed out after ${timeoutS}s]` : "";
+      const bounded = boundOutput(res.output, res.timedOut, timeoutS);
+      const hint = res.code !== 0 ? (missingToolHint(res.output) ?? "") : "";
       return {
-        content: [{ type: "text", text: (res.output || "(no output)") + suffix }],
+        content: [{ type: "text", text: bounded.text + hint }],
         details: {
           exitCode: res.code,
           timedOut: res.timedOut,
           sandboxed: false,
           durationMs: Date.now() - started,
+          ...(bounded.savedTo ? { savedTo: bounded.savedTo } : {}),
         },
       };
     },

@@ -19,7 +19,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type FinalReportPayload, renderFinalReportMarkdown, renderReportMarkdown } from "./report";
+import { type FinalReportPayload, renderFinalReportMarkdown, renderReportMarkdown, renderSarif } from "./report";
 
 export interface ActiveScan {
   scanId: string;
@@ -75,7 +75,7 @@ export function beginScan(target: string, scanMode: string): ActiveScan {
     scanMode,
     startedAt: new Date().toISOString(),
   };
-  for (const sub of ["notes", "coverage", "threat-models", "reports"]) {
+  for (const sub of ["notes", "coverage", "threat-models", "reports", "artifacts"]) {
     mkdirSync(join(dir, sub), { recursive: true });
   }
   // Keep scan artifacts out of the project's git status.
@@ -315,6 +315,47 @@ export function deleteFile(dir: string, bucket: string, id: string): void {
   }
 }
 
+// ---- artifacts — harvested credentials, tokens, and object references ------
+
+export interface Artifact {
+  id: string;
+  /** credential | object_ref | session | token | key | other */
+  kind: string;
+  /** The value: password, hash, JWT, cookie, UUID, numeric id, … */
+  value: string;
+  /** Where it was captured: endpoint, file, response, note id. */
+  source: string;
+  /** What it authenticates or identifies: user, role, tenant, endpoint scope. */
+  scope: string;
+  agent: string;
+  createdAt: string;
+}
+
+export function addArtifact(
+  dir: string,
+  artifact: Omit<Artifact, "id" | "createdAt">,
+): Artifact {
+  const full: Artifact = { ...artifact, id: "", createdAt: new Date().toISOString() };
+  writeEntry(join(dir, "artifacts"), "art", full);
+  return full;
+}
+
+export function listArtifacts(dir: string, kind?: string): Artifact[] {
+  return listJson<Artifact>(join(dir, "artifacts"))
+    .filter((a) => !kind || a.kind === kind)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Dedupe: same kind+value+scope is one artifact. */
+export function findArtifact(dir: string, kind: string, value: string, scope: string): Artifact | null {
+  const v = value.trim();
+  const sc = scope.trim().toLowerCase();
+  for (const a of listArtifacts(dir, kind)) {
+    if (a.value.trim() === v && a.scope.trim().toLowerCase() === sc) return a;
+  }
+  return null;
+}
+
 // ---- threat model ----------------------------------------------------------
 
 export interface ThreatModel {
@@ -397,6 +438,7 @@ export function listReports(dir: string): Report[] {
 export function writeFinalReport(dir: string, payload: unknown): void {
   atomicWrite(join(dir, "final-report.json"), JSON.stringify(payload, null, 2));
   atomicWrite(join(dir, "final-report.md"), renderFinalReportMarkdown(payload as FinalReportPayload));
+  atomicWrite(join(dir, "final-report.sarif"), renderSarif(payload as FinalReportPayload));
 }
 
 /** Derive a stable agent identity from the calling session's file path. */
