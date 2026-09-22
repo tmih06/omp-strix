@@ -75,7 +75,7 @@ jobs:
             for t in nmap masscan rustscan sqlmap dirsearch gobuster ffuf nikto hydra john hashcat \
                      httpx wafw00f arjun uro nuclei subfinder katana naabu dnsx uncover amass \
                      interactsh-client semgrep sg ast-grep trivy gitleaks trufflehog hurl \
-                     nxc enum4linux-ng smbmap jwt_tool paramspider dalfox feroxbuster kxss \
+                     prowler checkov wpscan radare2 binwalk onesixtyone arp-scan nbtscan pwn ropper \
                      gau waybackurls anew qsreplace unfurl hakrawler assetfinder x8 \
                      prowler checkov wpscan r2 binwalk onesixtyone arp-scan nbtscan \
                      python3 pip3 git jq curl wget openssl socat; do

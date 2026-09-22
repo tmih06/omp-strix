@@ -111,7 +111,8 @@ RUN set -euo pipefail; \
     go install github.com/lc/gau/v2/cmd/gau@latest; \
     go install github.com/Emoe/kxss@latest; \
     go install github.com/hakluke/hakrawler@latest; \
-    go install github.com/tomnomnom/assetfinder@latest; \
+    git clone --depth 1 https://github.com/tomnomnom/assetfinder /tmp/assetfinder \
+        && cd /tmp/assetfinder && go mod init assetfinder && go build -o /out/assetfinder .; \
     ls -la /out
 
 # ---------------------------------------------------------------------------
