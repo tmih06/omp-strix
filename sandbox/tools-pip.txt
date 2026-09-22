@@ -1,5 +1,30 @@
 # pip packages installed into the sandbox image — one per line.
-# Add a Python tool by appending its PyPI name here.
+# Add a Python tool by appending its PyPI name (or a git+https URL) here.
+# git+https installs require `git`, which tools-apt.txt provides (apt runs first).
+
+# --- HTTP / web testing ---
 httpx
 wafw00f
 arjun
+uro
+
+# --- SAST / cloud / IaC auditing ---
+semgrep
+prowler
+checkov
+
+# --- SMB / AD ---
+# netexec and enum4linux-ng are not published to PyPI — install from git.
+git+https://github.com/Pennyw0rth/NetExec
+git+https://github.com/cddmp/enum4linux-ng
+
+# --- secrets / exploitation ---
+impacket
+PyJWT
+
+# --- parameter mining (PyPI release is stale; upstream is git-only) ---
+git+https://github.com/devanshbatham/paramspider
+
+# --- binary exploitation ---
+pwntools
+ropper

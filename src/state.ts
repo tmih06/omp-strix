@@ -75,7 +75,7 @@ export function beginScan(target: string, scanMode: string): ActiveScan {
     scanMode,
     startedAt: new Date().toISOString(),
   };
-  for (const sub of ["notes", "coverage", "threat-models", "reports", "artifacts"]) {
+  for (const sub of ["notes", "coverage", "threat-models", "reports", "artifacts", "attack-path"]) {
     mkdirSync(join(dir, sub), { recursive: true });
   }
   // Keep scan artifacts out of the project's git status.
@@ -354,6 +354,36 @@ export function findArtifact(dir: string, kind: string, value: string, scope: st
     if (a.value.trim() === v && a.scope.trim().toLowerCase() === sc) return a;
   }
   return null;
+}
+
+// ---- attack path — directed graph of exploit hops across the engagement ----
+
+export interface AttackHop {
+  id: string;
+  /** Node types: surface | vulnerability | credential | access | objective */
+  from: string;
+  to: string;
+  /** How the hop was made: exploit, auth, pivot, escalate, exfiltrate. */
+  via: string;
+  /** Evidence: report id, artifact id, or command output reference. */
+  evidence: string;
+  agent: string;
+  createdAt: string;
+}
+
+export function addAttackHop(
+  dir: string,
+  hop: Omit<AttackHop, "id" | "createdAt">,
+): AttackHop {
+  const full: AttackHop = { ...hop, id: "", createdAt: new Date().toISOString() };
+  writeEntry(join(dir, "attack-path"), "hop", full);
+  return full;
+}
+
+export function listAttackPath(dir: string): AttackHop[] {
+  return listJson<AttackHop>(join(dir, "attack-path")).sort((a, b) =>
+    a.createdAt.localeCompare(b.createdAt),
+  );
 }
 
 // ---- threat model ----------------------------------------------------------

@@ -13,6 +13,7 @@ import type { Report } from "./state";
 import {
   activeScan,
   addArtifact,
+  addAttackHop,
   addCoverage,
   addNote,
   addReport,
@@ -25,6 +26,7 @@ import {
   getNote,
   getReport,
   getThreatModel,
+  listAttackPath,
   listArtifacts,
   listCoverage,
   listNotes,
@@ -1533,6 +1535,63 @@ const listArtifactsTool: ToolDef = {
 };
 
 // ---------------------------------------------------------------------------
+// attack path — directed graph of exploit hops across the engagement
+// ---------------------------------------------------------------------------
+
+const recordAttackHop: ToolDef = {
+  name: "record_attack_hop",
+  label: "Record Attack Hop",
+  description: `Record one hop in the engagement's attack path — a directed edge from one node to another.
+
+Nodes are free-form labels: a surface (endpoint, host, service), a vulnerability (report id or title), a credential (artifact id), an access level (user, admin, root, tenant), or an objective (data, shell, takeover).
+
+Use this to chain findings: "unauth endpoint" →exploit→ "SQLi vuln-0001" →auth→ "admin session" →pivot→ "internal API" →exploit→ "cross-tenant data". The root agent reads the full graph with get_attack_path to compose kill-chains for the report.`,
+  parameters: {
+    type: "object",
+    properties: {
+      from: S("Source node — surface, vuln, credential, or access level."),
+      to: S("Destination node — what the hop reaches."),
+      via: S("How: exploit | auth | pivot | escalate | exfiltrate | other."),
+      evidence: S("Proof — report id, artifact id, or command output reference."),
+    },
+    required: ["from", "to", "via", "evidence"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const from = str(params, "from").trim();
+    const to = str(params, "to").trim();
+    const via = str(params, "via").trim();
+    const evidence = str(params, "evidence").trim();
+    if (!from || !to || !via || !evidence) {
+      return json({ success: false, error: "from, to, via, and evidence are required" });
+    }
+    const hop = addAttackHop(dir, { from, to, via, evidence, agent: callerAgent(ctx) });
+    return json({ success: true, hop_id: hop.id });
+  },
+};
+
+const getAttackPath: ToolDef = {
+  name: "get_attack_path",
+  label: "Get Attack Path",
+  description: `Read the engagement's attack-path graph — every recorded hop as a directed edge. Use to compose kill-chains, find disconnected findings, and render attack narratives in the final report.`,
+  parameters: { type: "object", properties: {} },
+  async execute() {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const hops = listAttackPath(dir);
+    // Build adjacency for path reconstruction.
+    const nodes = new Set<string>();
+    const edges = hops.map((h) => {
+      nodes.add(h.from);
+      nodes.add(h.to);
+      return { from: h.from, to: h.to, via: h.via, evidence: h.evidence, agent: h.agent };
+    });
+    return json({ success: true, nodes: [...nodes], edges, hop_count: hops.length });
+  },
+};
+
+// ---------------------------------------------------------------------------
 // finish_scan — assemble the final report and end the scan
 // ---------------------------------------------------------------------------
 
@@ -1696,5 +1755,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   getReportTool,
   recordArtifact,
   listArtifactsTool,
+  recordAttackHop,
+  getAttackPath,
   finishScan,
 ];

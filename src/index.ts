@@ -472,6 +472,24 @@ export default function (pi: ExtensionAPI) {
   // otherwise an agent can escape isolation without touching bash.
   const HOST_EXEC_TOOLS = new Set(["eval", "computer", "debug", "browser"]);
 
+  // Dangerous-command guardrail (CAI-style): block destructive/exfiltrating
+  // commands even inside the sandbox — a pentest agent should never need
+  // rm -rf /, fork bombs, block-device writes, or env-var exfiltration.
+  const DANGEROUS_COMMANDS: { pattern: RegExp; reason: string }[] = [
+    {
+      pattern: /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+(-[a-zA-Z]*r[a-zA-Z]*)?|(-[a-zA-Z]*r[a-zA-Z]*\s+)?-[a-zA-Z]*f[a-zA-Z]*)\s+(?:--\s+)?\/(\s|$|\*|etc|boot|bin|sbin|usr|lib|var|dev|proc|sys|root|home)/,
+      reason: "Recursive forced deletion of system-critical paths",
+    },
+    { pattern: /\bdd\b.*\bof\s*=\s*\/dev\//, reason: "Direct write to block device" },
+    { pattern: /\bmkfs\b/, reason: "Filesystem format command" },
+    { pattern: />\s*\/dev\/[sh]d[a-z]/, reason: "Redirect to block device" },
+    { pattern: /:\(\)\{\s*:\|\s*:&\s*\}\s*;/, reason: "Fork bomb" },
+    { pattern: /\b(shutdown|poweroff|halt)\b(\s|$)/, reason: "System shutdown/halt" },
+    { pattern: /\bcurl\b.*\$\(env\)/, reason: "Environment variable exfiltration via curl" },
+    { pattern: /\bcurl\b.*\$\(cat\s+\/etc\/(passwd|shadow)/, reason: "Credential exfiltration via curl" },
+    { pattern: /\bbase64\s+(-d|--decode)\b.*\|\s*(ba)?sh\b/, reason: "Base64 decode-and-pipe to shell" },
+  ];
+
   // Route bash calls into the sandbox while strix mode is on; the container
   // starts lazily on the first call.
   pi.on("tool_call", async (event) => {
@@ -482,6 +500,15 @@ export default function (pi: ExtensionAPI) {
         reason:
           "strix sandbox is on — host-side code execution is disabled. Run it through the bash tool instead; commands execute inside the container.",
       };
+    }
+    // Command-safety guardrail — applies to every bash call while strix is on.
+    if (event.toolName === "bash") {
+      const cmd = String((event.input as Record<string, unknown>)?.command ?? "");
+      for (const { pattern, reason } of DANGEROUS_COMMANDS) {
+        if (pattern.test(cmd)) {
+          return { block: true, reason: `Blocked by strix safety guardrail: ${reason}` };
+        }
+      }
     }
     if (event.toolName !== "bash") {
       // File tools (write/read/grep/glob/edit) run on the host — map the

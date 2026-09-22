@@ -138,12 +138,80 @@ function containerCwd(requested: string | undefined, workspaceRoot: string): str
 /** Save oversized output to the scan dir and return a bounded tail. */
 const CONTEXT_OUTPUT_CAP = 32 * 1024; // what the agent actually sees
 
+/** Detect minified JS/CSS (long single lines, no whitespace structure). */
+function isMinified(raw: string): boolean {
+  const lines = raw.split("\n");
+  if (lines.length > 50) return false;
+  const longLines = lines.filter((l) => l.length > 500);
+  return longLines.length > 0 && longLines.length >= lines.length * 0.5;
+}
+
+/** Detect binary content (null bytes, high control-char ratio). */
+function isBinary(raw: string): boolean {
+  if (raw.includes("\0")) return true;
+  const sample = raw.slice(0, 4096);
+  const ctrl = [...sample].filter((c) => {
+    const code = c.charCodeAt(0);
+    return code < 9 || (code > 13 && code < 32);
+  }).length;
+  return ctrl / Math.max(1, sample.length) > 0.05;
+}
+
+/** Hex preview for binary content. */
+function hexPreview(raw: string, maxBytes = 256): string {
+  const bytes = Buffer.from(raw.slice(0, maxBytes), "utf8");
+  const lines: string[] = [];
+  for (let i = 0; i < bytes.length; i += 16) {
+    const chunk = bytes.subarray(i, i + 16);
+    const hex = [...chunk].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    const ascii = [...chunk].map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
+    lines.push(`${i.toString(16).padStart(8, "0")}  ${hex.padEnd(47)}  ${ascii}`);
+  }
+  return lines.join("\n");
+}
+
 function boundOutput(
   raw: string,
   timedOut: boolean,
   timeoutS: number,
 ): { text: string; savedTo?: string } {
   const suffix = timedOut ? `\n\n[command timed out after ${timeoutS}s — partial output shown]` : "";
+
+  // Binary content → hex preview, never raw bytes into context.
+  if (isBinary(raw)) {
+    const dir = scanDir();
+    let savedTo: string | undefined;
+    if (dir) {
+      const outDir = join(dir, "raw-output");
+      mkdirSync(outDir, { recursive: true });
+      const name = `cmd-${Date.now().toString(36)}.bin`;
+      writeFileSync(join(outDir, name), raw, "utf8");
+      savedTo = join(outDir, name);
+    }
+    return {
+      text: `[BINARY OUTPUT — ${raw.length} bytes${savedTo ? `, saved to ${savedTo}` : ""}]\n${hexPreview(raw)}${suffix}`,
+      savedTo,
+    };
+  }
+
+  // Minified JS/CSS → dense preview + save full.
+  if (isMinified(raw) && raw.length > CONTEXT_OUTPUT_CAP) {
+    const dir = scanDir();
+    let savedTo: string | undefined;
+    if (dir) {
+      const outDir = join(dir, "raw-output");
+      mkdirSync(outDir, { recursive: true });
+      const name = `cmd-${Date.now().toString(36)}.min`;
+      writeFileSync(join(outDir, name), raw, "utf8");
+      savedTo = join(outDir, name);
+    }
+    const preview = raw.slice(0, 2048);
+    return {
+      text: `[MINIFIED CONTENT — ${raw.length} chars${savedTo ? `, saved to ${savedTo}` : ""}]\n${preview}\n[… use grep/read on the saved file for details …]${suffix}`,
+      savedTo,
+    };
+  }
+
   if (raw.length <= CONTEXT_OUTPUT_CAP) {
     return { text: (raw || "(no output)") + suffix };
   }

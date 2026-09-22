@@ -70,5 +70,20 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Smoke-test tools
         run: |
-          docker run --rm omp-strix-sandbox:ci sh -c \
-            'for t in nmap sqlmap httpx gobuster hydra python3 jq; do command -v $t >/dev/null || { echo "MISSING: $t"; exit 1; }; done && echo "all tools present"'
+          docker run --rm omp-strix-sandbox:ci sh -c '
+            set -e
+            for t in nmap masscan rustscan sqlmap dirsearch gobuster ffuf nikto hydra john hashcat \
+                     httpx wafw00f arjun uro nuclei subfinder katana naabu dnsx uncover amass \
+                     interactsh-client semgrep sg ast-grep trivy gitleaks trufflehog hurl \
+                     nxc enum4linux-ng smbmap jwt_tool paramspider dalfox feroxbuster kxss \
+                     gau waybackurls anew qsreplace unfurl hakrawler assetfinder x8 \
+                     prowler checkov wpscan r2 binwalk onesixtyone arp-scan nbtscan \
+                     python3 pip3 git jq curl wget openssl socat; do
+              command -v $t >/dev/null || { echo "MISSING: $t"; exit 1; }
+            done
+            command -v secretsdump.py >/dev/null || command -v impacket-secretsdump >/dev/null \
+              || { echo "MISSING: impacket scripts"; exit 1; }
+            ls /opt/wordlists/common.txt /opt/wordlists/raft-small-directories.txt \
+               /opt/wordlists/raft-small-words.txt /opt/wordlists/subdomains-top1million-5000.txt >/dev/null \
+              || { echo "MISSING: wordlists"; exit 1; }
+            echo "all tools present"'
