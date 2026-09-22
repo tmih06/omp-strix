@@ -1867,6 +1867,7 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
       coverage,
       open_follow_ups: open,
       ...(forcedGaps ? { incomplete: forcedGaps } : {}),
+      degradations: listDegradation(dir),
     };
     writeFinalReport(dir, payload);
     endScan();

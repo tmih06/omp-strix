@@ -212,6 +212,7 @@ export interface FinalReportPayload {
   findings?: Report[];
   coverage?: CoverageEntry[];
   open_follow_ups?: CoverageEntry[];
+  degradations?: { reason: string; detail: string; agent: string }[];
 }
 
 export function renderFinalReportMarkdown(payload: FinalReportPayload): string {
@@ -222,6 +223,14 @@ export function renderFinalReportMarkdown(payload: FinalReportPayload): string {
         (SEVERITY_ORDER[(s(b.severity) ?? "").toLowerCase()] ?? 5) ||
       (s(a.createdAt) ?? "").localeCompare(s(b.createdAt) ?? ""),
   );
+
+  // Gapless renumbering: remap surviving findings to sequential IDs
+  // (VULN-01, VULN-02, ...) so rejected findings don't leave gaps.
+  const renumbered: (Report & { displayId: string })[] = sorted.map((r, i) => ({
+    ...r,
+    displayId: `VULN-${String(i + 1).padStart(2, "0")}`,
+  }));
+
   const lines: string[] = [
     "# Security Penetration Test Report",
     "",
@@ -235,18 +244,19 @@ export function renderFinalReportMarkdown(payload: FinalReportPayload): string {
     "",
     payload.executive_summary ?? "",
     "",
-    `## Findings (${sorted.length})`,
+    `## Findings (${renumbered.length})`,
     "",
   ];
-  if (sorted.length === 0) {
+  if (renumbered.length === 0) {
     lines.push("No findings filed.", "");
   } else {
     lines.push("| ID | Severity | Title | File |", "| --- | --- | --- | --- |");
-    for (const r of sorted) {
+    for (const r of renumbered) {
       const id = s(r.id) ?? "?";
+      const displayId = r.displayId;
       const sev = (s(r.severity) ?? "unknown").toUpperCase();
       const t = (s(r.title) ?? "untitled").replace(/\|/g, "\\|");
-      lines.push(`| ${id} | ${sev} | ${t} | [reports/${id}.md](reports/${id}.md) |`);
+      lines.push(`| ${displayId} | ${sev} | ${t} | [reports/${id}.md](reports/${id}.md) |`);
     }
     lines.push("");
   }
@@ -256,6 +266,16 @@ export function renderFinalReportMarkdown(payload: FinalReportPayload): string {
     lines.push(`## Open Follow-ups (${open.length})`, "");
     for (const e of open) {
       lines.push(`- **${e.surface}** (${e.riskArea}) — ${e.evidence}`);
+    }
+    lines.push("");
+  }
+
+  // Scan limitations — surface any recorded degradations.
+  const degradations = payload.degradations ?? [];
+  if (degradations.length > 0) {
+    lines.push(`## Scan Limitations (${degradations.length})`, "");
+    for (const d of degradations) {
+      lines.push(`- **${d.reason}** — ${d.detail} (${d.agent})`);
     }
     lines.push("");
   }
