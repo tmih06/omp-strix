@@ -7,9 +7,11 @@
 
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { boundOutput, run } from "./bash-tool";
 import { cvssBaseScore } from "./cvss";
+import { PLUGIN_ROOT } from "./paths";
 import { listSkills, loadSkillBody } from "./prompt";
 import { markSandboxActive, stopSandbox } from "./sandbox";
 import type { DegradationReason, PlanTask, Report } from "./state";
@@ -2278,7 +2280,100 @@ const listDegradationTool: ToolDef = {
   async execute() {
     const dir = scanDir();
     if (!dir) return noScan();
+
     return json({ success: true, degradations: listDegradation(dir) });
+  },
+};
+// ---------------------------------------------------------------------------
+// login_and_save_session — pre-flight auth validation + session persistence
+// ---------------------------------------------------------------------------
+
+const loginAndSaveSession: ToolDef = {
+  name: "login_and_save_session",
+  label: "Login & Save Session",
+  description: `Authenticate to the target and save the session state for reuse by downstream agents.
+
+Use this during pre-flight recon when the target requires authentication. It drives a headless browser through the login flow, validates access, and saves the session (cookies + localStorage) to the scan state. Downstream agents load it with \`fetch_url\` or \`bash\` + \`curl -b\` instead of re-authenticating.
+
+The session is stored at \`strix/scans/<id>/auth_state.json\` and can be loaded by any agent.`,
+  parameters: {
+    type: "object",
+    properties: {
+      url: S("The login URL."),
+      username: S("Username or email."),
+      password: S("Password."),
+      totp_secret: S("TOTP secret for MFA (optional)."),
+      success_indicator: S(
+        "Text or URL pattern that confirms login succeeded (e.g. 'Dashboard', '/dashboard').",
+      ),
+    },
+    required: ["url", "username", "password"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const url = str(params, "url").trim();
+    const username = str(params, "username").trim();
+    const password = str(params, "password").trim();
+    const _totpSecret = str(params, "totp_secret").trim();
+    const successIndicator = str(params, "success_indicator").trim();
+    if (!url || !username || !password) {
+      return json({ success: false, error: "url, username, and password are required" });
+    }
+
+    // Build a login script that uses the stealth init + form fill.
+    const loginScript = `
+      const { chromium } = require('playwright-core');
+      (async () => {
+        const browser = await chromium.launch({ headless: true });
+        const ctx = await browser.newContext({
+          userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        });
+        await ctx.addInitScript(${JSON.stringify(readFileSync(join(PLUGIN_ROOT, "sandbox", "stealth.js"), "utf8"))});
+        const page = await ctx.newPage();
+        await page.goto(${JSON.stringify(url)}, { waitUntil: 'networkidle', timeout: 30000 });
+        // Fill login form — try common field names.
+        const userFields = ['input[name="username"]', 'input[name="email"]', 'input[name="user"]', 'input[type="email"]', 'input[type="text"]'];
+        const passFields = ['input[name="password"]', 'input[type="password"]'];
+        for (const f of userFields) { try { await page.fill(f, ${JSON.stringify(username)}, { timeout: 2000 }); break; } catch {} }
+        for (const f of passFields) { try { await page.fill(f, ${JSON.stringify(password)}, { timeout: 2000 }); break; } catch {} }
+        // Submit — try button click, then Enter.
+        const submitFields = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")'];
+        for (const f of submitFields) { try { await page.click(f, { timeout: 2000 }); break; } catch {} }
+        await page.waitForTimeout(3000);
+        // Check success indicator.
+        const content = await page.content();
+        const url = page.url();
+        const success = ${JSON.stringify(successIndicator)}
+          ? (content.includes(${JSON.stringify(successIndicator)}) || url.includes(${JSON.stringify(successIndicator)}))
+          : !url.includes('login') && !url.includes('signin');
+        if (success) {
+          await ctx.storageState({ path: ${JSON.stringify(join(dir, "auth_state.json"))} });
+          console.log('LOGIN_SUCCESS');
+        } else {
+          console.log('LOGIN_FAILED');
+        }
+        await browser.close();
+      })();
+    `;
+    const res = await run(["node", "-e", loginScript], { timeoutS: 60 });
+    const success = res.output.includes("LOGIN_SUCCESS");
+    if (success) {
+      addArtifact(dir, {
+        kind: "session",
+        value: `auth_state:${join(dir, "auth_state.json")}`,
+        source: url,
+        scope: url,
+        agent: callerAgent(ctx),
+      });
+    }
+    return json({
+      success,
+      session_path: success ? join(dir, "auth_state.json") : undefined,
+      message: success
+        ? "Login succeeded — session saved. Downstream agents can load it with fetch_url or curl -b."
+        : `Login failed: ${res.output.slice(0, 500)}`,
+    });
   },
 };
 export const STRIX_TOOLS: ToolDef[] = [
@@ -2316,5 +2411,6 @@ export const STRIX_TOOLS: ToolDef[] = [
   recordDegradation,
   listDegradationTool,
 
+  loginAndSaveSession,
   finishScan,
 ];

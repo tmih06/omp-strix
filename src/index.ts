@@ -13,10 +13,10 @@
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { strixBash } from "./bash-tool";
+import { PLUGIN_ROOT } from "./paths";
 import { buildSystemPrompt } from "./prompt";
 import {
   containerRunning,
@@ -39,7 +39,6 @@ import {
 import { STRIX_TOOLS } from "./tools";
 
 const TOOL_NAMES = STRIX_TOOLS.map((t) => t.name);
-const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 interface StrixState {
   active: boolean;
