@@ -2,9 +2,11 @@
  * omp-strix — Strix adversarial security-testing mode for omp.
  *
  * `/strix` toggles strix mode on/off. On activation the strix system prompt
- * replaces the base prompt, the strix toolset is activated, and the strix-red
- * theme is applied. The operator names the target and depth in conversation;
- * the first prompt after activation is captured as the scan target and starts
+ * replaces the base prompt, the strix toolset is activated, the strix-red
+ * theme is applied, and the status line's `path`/`git`/`pr` segments are
+ * hidden (runtime-only settings override — nothing persisted). The operator
+ * names the target and depth in conversation; the first prompt after
+ * activation is captured as the scan target and starts
  * the scan record. The sandbox container starts lazily on the first `bash`
  * call. `/strix` again (or `finish_scan`, or session shutdown) ends the mode.
  */
@@ -48,6 +50,167 @@ const strix: StrixState = {
   sandboxStarting: null,
 };
 
+// ── Status-line segment hiding ─────────────────────────────────────────────
+// The extension API cannot touch built-in status-line segments: `setStatus`
+// only appends hook-status lines below the bar, and `setFooter`/`setHeader`
+// are no-op stubs in interactive mode. Segments are driven by the
+// `statusLine.*` settings, so we hide `path`/`git`/`pr` (cwd + branch leak
+// local topology in screenshots) via runtime-only `settings.override()` —
+// nothing is persisted to the user's config.
+//
+// Two wrinkles:
+//  1. `leftSegments`/`rightSegments` only take effect under preset "custom",
+//     so we resolve the user's effective layout (preset + their overrides),
+//     filter it, and re-pin separator/segmentOptions that the custom preset
+//     would otherwise reset.
+//  2. The status-line component only re-reads settings when the
+//     `statusLine.sessionAccent` signal fires, so we toggle it twice to
+//     force a resync that lands back on the user's original value.
+
+type SettingsLike = {
+  get(path: string): unknown;
+  override(path: string, value: unknown): void;
+  clearOverride(path: string): void;
+};
+
+const HIDDEN_SEGMENTS = new Set(["path", "git", "pr"]);
+
+// Mirrors packages/tui/src/status-line/presets.ts — needed to resolve the
+// effective segment list before filtering. Unknown presets fall back to
+// "default", matching upstream getPreset().
+const STATUS_LINE_PRESET_SEGMENTS: Record<
+  string,
+  { left: string[]; right: string[]; separator?: string; segmentOptions?: Record<string, unknown> }
+> = {
+  default: {
+    left: ["pi", "vim", "model", "mode", "collab", "stream", "path", "git", "pr", "context_pct", "cost"],
+    right: ["session_name"],
+    separator: "powerline-thin",
+    segmentOptions: {
+      model: { showThinkingLevel: true },
+      path: { abbreviate: true, maxLength: 40, stripWorkPrefix: true },
+      git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
+    },
+  },
+  minimal: {
+    left: ["vim", "path", "git"],
+    right: ["session_name", "mode", "context_pct"],
+    separator: "slash",
+    segmentOptions: {
+      path: { abbreviate: true, maxLength: 30 },
+      git: { showBranch: true, showStaged: false, showUnstaged: false, showUntracked: false },
+    },
+  },
+  compact: {
+    left: ["vim", "model", "mode", "git", "pr"],
+    right: ["session_name", "cost", "context_pct"],
+    separator: "powerline-thin",
+    segmentOptions: {
+      model: { showThinkingLevel: false },
+      git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: false },
+    },
+  },
+  full: {
+    left: ["pi", "vim", "hostname", "model", "mode", "path", "git", "pr", "subagents"],
+    right: ["session_name", "cache_hit", "token_in", "token_out", "token_rate", "cache_read", "cost", "context_pct", "time_spent", "time"],
+    separator: "powerline",
+    segmentOptions: {
+      model: { showThinkingLevel: true },
+      path: { abbreviate: true, maxLength: 50 },
+      git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
+      time: { format: "24h", showSeconds: false },
+    },
+  },
+  nerd: {
+    left: ["pi", "vim", "hostname", "model", "mode", "path", "git", "pr", "session", "subagents"],
+    right: ["session_name", "token_in", "token_out", "cache_read", "cache_write", "token_rate", "cost", "context_pct", "context_total", "time_spent", "time"],
+    separator: "powerline",
+    segmentOptions: {
+      model: { showThinkingLevel: true },
+      path: { abbreviate: true, maxLength: 60 },
+      git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
+      time: { format: "24h", showSeconds: true },
+    },
+  },
+  ascii: {
+    left: ["vim", "model", "mode", "path", "git", "pr"],
+    right: ["session_name", "token_total", "cost", "context_pct"],
+    separator: "ascii",
+    segmentOptions: {
+      model: { showThinkingLevel: true },
+      path: { abbreviate: true, maxLength: 40 },
+      git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
+    },
+  },
+  custom: {
+    left: ["vim", "model", "mode", "path", "git", "pr"],
+    right: ["session_name", "token_total", "cost", "context_pct"],
+    separator: "powerline-thin",
+    segmentOptions: {},
+  },
+};
+
+const STATUS_LINE_OVERRIDE_KEYS = [
+  "statusLine.preset",
+  "statusLine.leftSegments",
+  "statusLine.rightSegments",
+  "statusLine.separator",
+  "statusLine.segmentOptions",
+] as const;
+
+let statusLineHidden = false;
+
+function liveSettings(pi: ExtensionAPI): SettingsLike | null {
+  try {
+    // `pi.pi` is the pi-coding-agent module namespace; `settings` is the live
+    // singleton proxy (throws before init — hence the probe).
+    const s = (pi.pi as { settings?: SettingsLike }).settings;
+    if (!s) return null;
+    s.get("statusLine.preset"); // probe: throws if uninitialized
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+/** Toggle sessionAccent twice — its signal is the only trigger that makes the
+ *  status-line component re-read the whole `statusLine.*` group. */
+function resyncStatusLine(s: SettingsLike): void {
+  const accent = s.get("statusLine.sessionAccent") !== false;
+  s.override("statusLine.sessionAccent", !accent);
+  s.override("statusLine.sessionAccent", accent);
+}
+
+function hidePathGitSegments(pi: ExtensionAPI): void {
+  const s = liveSettings(pi);
+  if (!s || statusLineHidden) return;
+  const preset = String(s.get("statusLine.preset") ?? "default");
+  const def = STATUS_LINE_PRESET_SEGMENTS[preset] ?? STATUS_LINE_PRESET_SEGMENTS.default;
+  const custom = preset === "custom";
+  const left = (custom ? (s.get("statusLine.leftSegments") as string[] | undefined) : undefined) ?? def.left;
+  const right = (custom ? (s.get("statusLine.rightSegments") as string[] | undefined) : undefined) ?? def.right;
+  const separator = (s.get("statusLine.separator") as string | undefined) ?? def.separator;
+  const segmentOptions = {
+    ...(def.segmentOptions ?? {}),
+    ...((s.get("statusLine.segmentOptions") as Record<string, unknown> | undefined) ?? {}),
+  };
+  s.override("statusLine.preset", "custom");
+  s.override("statusLine.leftSegments", left.filter((id) => !HIDDEN_SEGMENTS.has(id)));
+  s.override("statusLine.rightSegments", right.filter((id) => !HIDDEN_SEGMENTS.has(id)));
+  s.override("statusLine.separator", separator);
+  s.override("statusLine.segmentOptions", segmentOptions);
+  statusLineHidden = true;
+  resyncStatusLine(s);
+}
+
+function restoreStatusLineSegments(pi: ExtensionAPI): void {
+  const s = liveSettings(pi);
+  if (!s || !statusLineHidden) return;
+  for (const key of STATUS_LINE_OVERRIDE_KEYS) s.clearOverride(key);
+  statusLineHidden = false;
+  resyncStatusLine(s);
+}
+
 /** Copy the bundled theme into the agent themes dir so setTheme can find it. */
 function installTheme(): void {
   try {
@@ -64,6 +227,7 @@ function installTheme(): void {
 
 async function deactivate(pi: ExtensionAPI, ctx: { ui: { notify(m: string, l?: string): void } }): Promise<void> {
   strix.active = false;
+  restoreStatusLineSegments(pi);
   strix.systemPrompt = null;
   strix.scanStarted = false;
   strix.sandboxStarting = null;
@@ -105,6 +269,7 @@ export default function (pi: ExtensionAPI) {
       pi.setSessionName("strix");
       ctx.ui.setWorkingMessage("Scanning…");
       ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
+      hidePathGitSegments(pi);
       ctx.ui.notify(
         "Strix mode on. Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit.",
         "info",

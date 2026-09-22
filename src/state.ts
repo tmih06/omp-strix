@@ -10,8 +10,8 @@
  *       notes/<id>.json                -> one file per note (append-only, no RMW races)
  *       coverage/<id>.json             -> one file per coverage entry
  *       threat-models/<slug>.json      -> { target, model, amendments[] }
- *       reports/vuln-NNNN.json         -> one file per filed report
- *       final-report.json              -> finish_scan payload
+ *       reports/vuln-NNNN.json         -> one file per filed report (+ .md sibling)
+ *       final-report.json              -> finish_scan payload (+ final-report.md)
  */
 
 import {
@@ -26,6 +26,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { renderFinalReportMarkdown, renderReportMarkdown, type FinalReportPayload } from "./report";
 
 export interface ActiveScan {
   scanId: string;
@@ -268,6 +269,7 @@ export function addReport(dir: string, prefix: string, report: Omit<Report, "id"
   const id = nextReportId(dir, prefix);
   const full = { ...report, id } as Report;
   atomicWrite(join(dir, "reports", `${id}.json`), JSON.stringify(full, null, 2));
+  atomicWrite(join(dir, "reports", `${id}.md`), renderReportMarkdown(full));
   return full;
 }
 
@@ -277,6 +279,7 @@ export function getReport(dir: string, id: string): Report | null {
 
 export function putReport(dir: string, report: Report): void {
   atomicWrite(join(dir, "reports", `${report.id}.json`), JSON.stringify(report, null, 2));
+  atomicWrite(join(dir, "reports", `${report.id}.md`), renderReportMarkdown(report));
 }
 
 export function listReports(dir: string): Report[] {
@@ -286,9 +289,9 @@ export function listReports(dir: string): Report[] {
 }
 
 // ---- final report ------------------------------------------------------------
-
 export function writeFinalReport(dir: string, payload: unknown): void {
   atomicWrite(join(dir, "final-report.json"), JSON.stringify(payload, null, 2));
+  atomicWrite(join(dir, "final-report.md"), renderFinalReportMarkdown(payload as FinalReportPayload));
 }
 
 /** Derive a stable agent identity from the calling session's file path. */
