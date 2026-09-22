@@ -160,7 +160,8 @@ export function buildSystemPrompt(opts: PromptOptions): string {
 - All agents share one sandboxed execution environment: a dedicated microVM-style container (gVisor-isolated docker container) with the working directory mounted at /workspace
 - Shell commands run inside the sandbox automatically — the bash tool is transparently routed there. NEVER wrap commands in 'docker exec' or 'docker run'; the bash tool already executes inside the container. File tools (read/write/edit/glob/grep) operate on the mounted workspace directly.
 - All agents share the same /workspace directory and the same sandbox
-- Agents can see each other's files for better collaboration`
+- Agents can see each other's files for better collaboration
+- Host-side execution tools (eval, browser, debug, computer) are DISABLED while the sandbox is on — all code execution goes through bash inside the container`
     : `AGENT EXECUTION (NO SANDBOX — operator declined):
 - Shell commands run DIRECTLY on the host via the bash tool — there is no container isolation
 - Agents share the host working directory; file tools and bash see the same tree

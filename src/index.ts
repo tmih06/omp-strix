@@ -383,10 +383,23 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: strix.systemPrompt };
   });
 
+  // Tools that execute code on the HOST, bypassing the container: eval runs
+  // Python/JS in-process, computer/debug drive host programs, and browser's
+  // tab.run has full Bun/Node access. When the sandbox is on, block them —
+  // otherwise an agent can escape isolation without touching bash.
+  const HOST_EXEC_TOOLS = new Set(["eval", "computer", "debug", "browser"]);
+
   // Route bash calls into the sandbox while strix mode is on; the container
   // starts lazily on the first call.
   pi.on("tool_call", async (event) => {
     if (!strix.active || !strix.sandboxEnabled) return;
+    if (HOST_EXEC_TOOLS.has(event.toolName)) {
+      return {
+        block: true,
+        reason:
+          "strix sandbox is on — host-side code execution is disabled. Run it through the bash tool instead; commands execute inside the container.",
+      };
+    }
     if (event.toolName !== "bash") return;
     if (!activeScan()) return; // no scan yet — nothing to sandbox against
     strix.sandboxStarting ??= (async () => {
