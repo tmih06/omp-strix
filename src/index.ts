@@ -333,7 +333,7 @@ export default function (pi: ExtensionAPI) {
   // Shadow the builtin bash: the transcript shows the agent's original
   // command while execute() routes into the container when the sandbox is
   // on. Registered unconditionally — it falls back to host bash otherwise.
-  pi.registerTool(strixBash);
+  pi.registerTool(strixBash(pi));
   for (const tool of STRIX_TOOLS) {
     pi.registerTool({ ...tool, defaultInactive: true });
   }
