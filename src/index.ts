@@ -26,7 +26,7 @@ import {
   rewritePathInput,
   stopSandbox,
 } from "./sandbox";
-import { activeScan, beginScan, endScan, recordSubagentUsage, resetScanMetrics } from "./state";
+import { activeScan, beginScan, endScan } from "./state";
 import { STRIX_TOOLS } from "./tools";
 
 const TOOL_NAMES = STRIX_TOOLS.map((t) => t.name);
@@ -385,7 +385,6 @@ export default function (pi: ExtensionAPI) {
     if (!strix.scanStarted) {
       strix.scanStarted = true;
       const target = event.prompt?.trim() || "unspecified";
-      resetScanMetrics();
       beginScan(target, "conversation");
       pi.setSessionName(`strix: ${target.slice(0, 60)}`);
     }
@@ -433,21 +432,14 @@ export default function (pi: ExtensionAPI) {
     if (rewritten) return { input: rewritten };
   });
 
-  // Subagent usage isn't in the main session's token accounting — accumulate
-  // it from `task` tool results so the scan's true cost is reported.
+  // finish_scan ends the mode too — the tool can't reach this module's
+  // state, so the runner-side hook does the teardown.
   pi.on("tool_result", async (event, ctx) => {
     if (!strix.active) return;
-    const e = event as { toolName?: string; details?: unknown };
-    // finish_scan ends the mode too — the tool can't reach this module's
-    // state, so the runner-side hook does the teardown.
+    const e = event as { toolName?: string };
     if (e.toolName === "finish_scan") {
       await deactivate(pi, ctx);
-      return;
     }
-    if (e.toolName !== "task" || !e.details || typeof e.details !== "object") return;
-    const d = e.details as { usage?: unknown; results?: unknown[]; totalDurationMs?: number };
-    const runs = Array.isArray(d.results) ? d.results.length : 0;
-    recordSubagentUsage(d.usage, typeof d.totalDurationMs === "number" ? d.totalDurationMs : 0, runs);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {

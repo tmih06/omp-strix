@@ -16,6 +16,7 @@ import {
   addNote,
   addReport,
   callerAgent,
+  collectSubagentMetrics,
   deleteFile,
   endScan,
   findCoverage,
@@ -31,7 +32,6 @@ import {
   putReport,
   putThreatModel,
   scanDir,
-  scanMetrics,
   writeFinalReport,
 } from "./state";
 
@@ -1356,9 +1356,16 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     const reports = listReports(dir);
     const coverage = listCoverage(dir);
     const open = coverage.filter((e) => e.outcome === "needs_follow_up");
-    const usage = (
-      ctx as { sessionManager?: { getUsageStatistics?: () => { totalTokens?: number; cost?: number } } }
-    )?.sessionManager?.getUsageStatistics?.();
+    const sm = ctx as {
+      sessionManager?: {
+        getUsageStatistics?: () => { totalTokens?: number; cost?: number };
+        getSessionFile?: () => string | undefined;
+      };
+    };
+    const usage = sm?.sessionManager?.getUsageStatistics?.();
+    // task results fire at spawn with no usage — sum the subagent session
+    // transcripts (sibling dir of this session's jsonl) instead.
+    const sub = collectSubagentMetrics(sm?.sessionManager?.getSessionFile?.());
     const payload = {
       scan_id: scan?.scanId ?? null,
       target: scan?.target ?? null,
@@ -1372,9 +1379,10 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
           : null,
         main_session_tokens: usage?.totalTokens ?? null,
         main_session_cost: usage?.cost ?? null,
-        subagent_tokens: scanMetrics.subagentUsage.totalTokens || null,
-        subagent_runs: scanMetrics.subagentRuns,
-        subagent_duration_ms: scanMetrics.subagentDurationMs || null,
+        subagent_tokens: sub.subagentUsage.totalTokens || null,
+        subagent_cost: sub.subagentUsage.costTotal || null,
+        subagent_runs: sub.subagentRuns,
+        subagent_duration_ms: sub.subagentDurationMs || null,
       },
       findings: reports,
       coverage,

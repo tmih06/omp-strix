@@ -116,7 +116,7 @@ export interface UsageTotals {
 }
 
 export interface ScanMetrics {
-  /** Aggregated usage across `task` tool results (subagent runs). */
+  /** Aggregated usage across subagent session transcripts. */
   subagentUsage: UsageTotals;
   subagentRuns: number;
   subagentDurationMs: number;
@@ -131,35 +131,62 @@ const emptyUsage = (): UsageTotals => ({
   costTotal: 0,
 });
 
-/** Process-wide metrics for the active scan. Shared across agent sessions
- *  because Bun caches this module once per process. */
-export const scanMetrics: ScanMetrics = {
-  subagentUsage: emptyUsage(),
-  subagentRuns: 0,
-  subagentDurationMs: 0,
-};
-
-export function resetScanMetrics(): void {
-  scanMetrics.subagentUsage = emptyUsage();
-  scanMetrics.subagentRuns = 0;
-  scanMetrics.subagentDurationMs = 0;
-}
-
-/** Accumulate usage from a `task` tool result's details.usage. */
-export function recordSubagentUsage(usage: unknown, durationMs: number, runs: number): void {
-  if (usage && typeof usage === "object") {
-    const u = usage as Record<string, unknown>;
-    const num = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
-    scanMetrics.subagentUsage.input += num("input");
-    scanMetrics.subagentUsage.output += num("output");
-    scanMetrics.subagentUsage.cacheRead += num("cacheRead");
-    scanMetrics.subagentUsage.cacheWrite += num("cacheWrite");
-    scanMetrics.subagentUsage.totalTokens += num("totalTokens");
-    const cost = u.cost as Record<string, unknown> | undefined;
-    if (cost && typeof cost.total === "number") scanMetrics.subagentUsage.costTotal += cost.total;
+/**
+ * Sum token usage across subagent session transcripts. `task` tool results
+ * fire at spawn time with no usage; completions arrive as steers without
+ * usage either — the only durable record is each subagent session's own
+ * jsonl, which lives in a subdirectory named after the parent session file.
+ */
+export function collectSubagentMetrics(sessionFile: string | undefined): ScanMetrics {
+  const metrics: ScanMetrics = { subagentUsage: emptyUsage(), subagentRuns: 0, subagentDurationMs: 0 };
+  if (!sessionFile) return metrics;
+  const dir = sessionFile.replace(/\.jsonl$/, "");
+  let files: string[];
+  try {
+    files = readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .map((f) => join(dir, f));
+  } catch {
+    return metrics;
   }
-  scanMetrics.subagentRuns += runs;
-  scanMetrics.subagentDurationMs += durationMs;
+  for (const file of files) {
+    metrics.subagentRuns += 1;
+    let first: number | null = null;
+    let last: number | null = null;
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      let e: { timestamp?: string; message?: { role?: string; usage?: Record<string, unknown> } };
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const ts = e.timestamp ? Date.parse(e.timestamp) : Number.NaN;
+      if (!Number.isNaN(ts)) {
+        if (first === null || ts < first) first = ts;
+        if (last === null || ts > last) last = ts;
+      }
+      const u = e.message?.role === "assistant" ? e.message.usage : undefined;
+      if (u && typeof u === "object") {
+        const num = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
+        metrics.subagentUsage.input += num("input");
+        metrics.subagentUsage.output += num("output");
+        metrics.subagentUsage.cacheRead += num("cacheRead");
+        metrics.subagentUsage.cacheWrite += num("cacheWrite");
+        metrics.subagentUsage.totalTokens += num("totalTokens");
+        const cost = u.cost as Record<string, unknown> | undefined;
+        if (cost && typeof cost.total === "number") metrics.subagentUsage.costTotal += cost.total;
+      }
+    }
+    if (first !== null && last !== null) metrics.subagentDurationMs += last - first;
+  }
+  return metrics;
 }
 
 function newId(prefix: string): string {
