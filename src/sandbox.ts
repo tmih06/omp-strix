@@ -196,3 +196,19 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
   delete out.cwd; // key must be absent, not undefined — schema rejects undefined
   return out;
 }
+
+/**
+ * Rewrite a file-tool call's `path` arg so `/workspace/...` (the container
+ * path agents see in the prompt) maps to the host-side mounted root.
+ * Returns the new input object, or null when nothing needs rewriting.
+ */
+export function rewritePathInput(input: Record<string, unknown>): Record<string, unknown> | null {
+  const sb = activeSandbox();
+  if (!sb?.workspaceRoot) return null;
+  const path = input.path;
+  if (typeof path !== "string") return null;
+  if (path === WORKSPACE || path.startsWith(`${WORKSPACE}/`)) {
+    return { ...input, path: join(sb.workspaceRoot, path.slice(WORKSPACE.length)) };
+  }
+  return null;
+}

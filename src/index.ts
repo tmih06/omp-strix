@@ -23,6 +23,7 @@ import {
   markSandboxActive,
   recordSandbox,
   rewriteBashInput,
+  rewritePathInput,
   stopSandbox,
 } from "./sandbox";
 import { activeScan, beginScan, endScan, recordSubagentUsage, resetScanMetrics } from "./state";
@@ -385,7 +386,14 @@ export default function (pi: ExtensionAPI) {
           "strix sandbox is on — host-side code execution is disabled. Run it through the bash tool instead; commands execute inside the container.",
       };
     }
-    if (event.toolName !== "bash") return;
+    if (event.toolName !== "bash") {
+      // File tools (write/read/grep/glob/edit) run on the host — map the
+      // container's /workspace prefix onto the mounted host root so agents
+      // can use the paths the prompt shows them.
+      const rewritten = rewritePathInput(event.input as Record<string, unknown>);
+      if (rewritten) return { input: rewritten };
+      return;
+    }
     if (!activeScan()) return; // no scan yet — nothing to sandbox against
     strix.sandboxStarting ??= (async () => {
       if (!(await dockerAvailable())) return "docker not available";
