@@ -28,7 +28,14 @@ import {
   rewritePathInput,
   stopSandbox,
 } from "./sandbox";
-import { activeScan, beginScan, collectSubagentMetrics, endScan, resumableScan } from "./state";
+import {
+  activeScan,
+  beginScan,
+  collectSubagentMetrics,
+  endScan,
+  resumableScan,
+  setProjectDir,
+} from "./state";
 import { STRIX_TOOLS } from "./tools";
 
 const TOOL_NAMES = STRIX_TOOLS.map((t) => t.name);
@@ -372,6 +379,9 @@ export default function (pi: ExtensionAPI) {
       await pi.setActiveTools([...preTools.filter((t) => t !== "goal"), ...TOOL_NAMES]);
       strix.active = true;
       strix.ownerSessionId = eventSessionId(ctx);
+      // Root the scan store at this project's cwd — parallel scans in other
+      // repos get their own strix/ tree and never see each other's state.
+      setProjectDir(ctx.cwd ?? process.cwd());
       // Capture the active theme NAME — setTheme rejects Theme objects
       // ("Direct theme object not supported"), so the name is the only
       // restorable handle. pi.pi re-exports @oh-my-pi/pi-tui/theme.

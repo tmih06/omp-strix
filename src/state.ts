@@ -2,9 +2,11 @@
  * Scan-state store for strix mode.
  *
  * Layout (mirrors strix's per-scan shared state, file-backed so every agent
- * session in the process sees the same data regardless of module instance):
+ * session in the process sees the same data regardless of module instance).
+ * Rooted at the PROJECT's working directory so parallel scans in different
+ * repos never share state:
  *
- *   <agentDir>/strix/
+ *   <projectDir>/strix/
  *     active.json                      -> { scanId, dir, target, scanMode, startedAt }
  *     scans/<scanId>/
  *       notes/<id>.json                -> one file per note (append-only, no RMW races)
@@ -16,7 +18,6 @@
 
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { type FinalReportPayload, renderFinalReportMarkdown, renderReportMarkdown } from "./report";
 
@@ -28,9 +29,15 @@ export interface ActiveScan {
   startedAt: string;
 }
 
-const STRIX_ROOT = join(homedir(), ".omp", "agent", "strix");
-const ACTIVE_FILE = join(STRIX_ROOT, "active.json");
-const SCANS_DIR = join(STRIX_ROOT, "scans");
+/** Project working directory the scan store is rooted at. Set from ctx.cwd
+ *  at /strix activation; defaults to process cwd so tools work before that. */
+let projectDir = process.cwd();
+export function setProjectDir(dir: string): void {
+  projectDir = dir;
+}
+const strixRoot = () => join(projectDir, "strix");
+const activeFile = () => join(strixRoot(), "active.json");
+const scansDir = () => join(strixRoot(), "scans");
 
 function atomicWrite(path: string, data: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -60,7 +67,7 @@ function listJson<T>(dir: string): T[] {
 
 export function beginScan(target: string, scanMode: string): ActiveScan {
   const scanId = `scan-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
-  const dir = join(SCANS_DIR, scanId);
+  const dir = join(scansDir(), scanId);
   const scan: ActiveScan = {
     scanId,
     dir,
@@ -71,21 +78,24 @@ export function beginScan(target: string, scanMode: string): ActiveScan {
   for (const sub of ["notes", "coverage", "threat-models", "reports"]) {
     mkdirSync(join(dir, sub), { recursive: true });
   }
-  atomicWrite(ACTIVE_FILE, JSON.stringify(scan, null, 2));
+  // Keep scan artifacts out of the project's git status.
+  const gi = join(strixRoot(), ".gitignore");
+  if (!existsSync(gi)) atomicWrite(gi, "*\n");
+  atomicWrite(activeFile(), JSON.stringify(scan, null, 2));
   return scan;
 }
 
 export function endScan(): void {
   try {
-    if (existsSync(ACTIVE_FILE)) {
-      const scan = readJson<ActiveScan>(ACTIVE_FILE);
+    if (existsSync(activeFile())) {
+      const scan = readJson<ActiveScan>(activeFile());
       if (scan) {
         atomicWrite(join(scan.dir, "ended.json"), JSON.stringify({ endedAt: new Date().toISOString() }));
       }
     }
   } finally {
     try {
-      renameSync(ACTIVE_FILE, `${ACTIVE_FILE}.last`);
+      renameSync(activeFile(), `${activeFile()}.last`);
     } catch {
       /* already gone */
     }
@@ -94,14 +104,14 @@ export function endScan(): void {
 
 /** Resolve the scan dir for a tool call. Falls back to the last active scan. */
 export function scanDir(): string | null {
-  const active = readJson<ActiveScan>(ACTIVE_FILE);
+  const active = readJson<ActiveScan>(activeFile());
   if (active?.dir) return active.dir;
-  const last = readJson<ActiveScan>(`${ACTIVE_FILE}.last`);
+  const last = readJson<ActiveScan>(`${activeFile()}.last`);
   return last?.dir ?? null;
 }
 
 export function activeScan(): ActiveScan | null {
-  return readJson<ActiveScan>(ACTIVE_FILE);
+  return readJson<ActiveScan>(activeFile());
 }
 
 /**
@@ -110,7 +120,7 @@ export function activeScan(): ActiveScan | null {
  * session died before finish_scan/deactivate ran).
  */
 export function resumableScan(): ActiveScan | null {
-  const scan = readJson<ActiveScan>(ACTIVE_FILE);
+  const scan = readJson<ActiveScan>(activeFile());
   if (!scan?.dir) return null;
   try {
     if (existsSync(join(scan.dir, "ended.json"))) return null;
