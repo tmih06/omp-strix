@@ -12,12 +12,13 @@ import { boundOutput, run } from "./bash-tool";
 import { cvssBaseScore } from "./cvss";
 import { listSkills, loadSkillBody } from "./prompt";
 import { markSandboxActive, stopSandbox } from "./sandbox";
-import type { PlanTask, Report } from "./state";
+import type { DegradationReason, PlanTask, Report } from "./state";
 import {
   activeScan,
   addArtifact,
   addAttackHop,
   addCoverage,
+  addDegradation,
   addNote,
   addReport,
   callerAgent,
@@ -33,6 +34,7 @@ import {
   listArtifacts,
   listAttackPath,
   listCoverage,
+  listDegradation,
   listNotes,
   listReports,
   listThreatModels,
@@ -2219,6 +2221,65 @@ Modes:
     return json({ success: false, error: `Unknown mode '${mode}'` });
   },
 };
+
+// ---------------------------------------------------------------------------
+// degradation — closed reason codes for partial coverage
+// ---------------------------------------------------------------------------
+
+const DEGRADATION_REASONS = [
+  "agent_timeout",
+  "tool_error",
+  "endpoint_unreachable",
+  "auth_failed",
+  "rate_limited",
+  "scope_excluded",
+  "sast_failed",
+  "reconciliation_failed",
+  "report_omitted",
+] as const;
+
+const recordDegradation: ToolDef = {
+  name: "record_degradation",
+  label: "Record Degradation",
+  description: `Record a scan degradation — a reason the scan's coverage is incomplete.
+
+Use this when a validator times out, a tool errors, an endpoint is unreachable, auth fails, or any other condition means the scan did not fully cover its scope. The degradation is persisted and surfaced in the final report's "Scan Limitations" section.`,
+  parameters: {
+    type: "object",
+    properties: {
+      reason: { type: "string", enum: DEGRADATION_REASONS, description: "Closed reason code." },
+      detail: S("What happened — the agent, tool, or endpoint that failed."),
+    },
+    required: ["reason", "detail"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const reason = str(params, "reason") as DegradationReason;
+    const detail = str(params, "detail").trim();
+    if (!DEGRADATION_REASONS.includes(reason)) {
+      return json({
+        success: false,
+        error: `Invalid reason. Must be one of: ${DEGRADATION_REASONS.join(", ")}`,
+      });
+    }
+    if (!detail) return json({ success: false, error: "detail is required" });
+    const deg = addDegradation(dir, { reason, detail, agent: callerAgent(ctx) });
+    return json({ success: true, degradation_id: deg.id });
+  },
+};
+
+const listDegradationTool: ToolDef = {
+  name: "list_degradation",
+  label: "List Degradation",
+  description: `List all recorded degradations — the scan's known coverage gaps.`,
+  parameters: { type: "object", properties: {} },
+  async execute() {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    return json({ success: true, degradations: listDegradation(dir) });
+  },
+};
 export const STRIX_TOOLS: ToolDef[] = [
   think,
   loadSkill,
@@ -2251,6 +2312,8 @@ export const STRIX_TOOLS: ToolDef[] = [
   terminal,
   scan,
   python,
+  recordDegradation,
+  listDegradationTool,
 
   finishScan,
 ];
