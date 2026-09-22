@@ -86,13 +86,19 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
     "NET_RAW",
     "--network",
     "host",
+    // Container runs as root; the exec wrapper sets umask 000 so files it
+    // writes in /workspace are world-writable for the host user.
+    // Container /tmp is invisible to the host — redirect it into the mount.
+    "-e",
+    `TMPDIR=${WORKSPACE}/.tmp`,
     "-v",
     `${cwd}:${WORKSPACE}`,
     "-w",
     WORKSPACE,
     image,
-    "sleep",
-    "infinity",
+    "sh",
+    "-c",
+    "umask 000; mkdir -p /workspace/.tmp; exec sleep infinity",
   ]);
   if (res.code !== 0) {
     return `docker run failed: ${res.stderr.trim() || res.stdout.trim()}`;
@@ -165,12 +171,14 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
   // survives into the host shell — apostrophes/spaces in paths are inert.
   const inner = `cd ${JSON.stringify(innerCwd)} && ${command}`;
   const b64 = Buffer.from(inner, "utf8").toString("base64");
-  const wrapped = `eval "$(echo ${b64} | base64 -d)"`;
+  // umask 000: the container runs as root, so files it writes into the
+  // /workspace mount must be world-writable for the host user to touch them.
+  const wrapped = `umask 000; eval "$(echo ${b64} | base64 -d)"`;
   // If the container is gone, recreate it before exec. This is a sync
   // rewrite so we can't await ensureSandbox; instead we prepend a
   // conditional start that is a no-op when the container is already up.
   // stdout is redirected too — `docker start` echoes the container name.
-  const ensure = `docker start ${NAME} >/dev/null 2>&1 || docker run -d --name ${NAME} --cap-add NET_RAW --network host -v "${sb.workspaceRoot}:${WORKSPACE}" -w ${WORKSPACE} ${sandboxImage()} sleep infinity`;
+  const ensure = `docker start ${NAME} >/dev/null 2>&1 || docker run -d --name ${NAME} --cap-add NET_RAW --network host -e TMPDIR=${WORKSPACE}/.tmp -v "${sb.workspaceRoot}:${WORKSPACE}" -w ${WORKSPACE} ${sandboxImage()} sh -c 'umask 000; mkdir -p ${WORKSPACE}/.tmp; exec sleep infinity'`;
   const execArgs = ["docker", "exec", NAME, "sh", "-c", `'${wrapped}'`];
 
   const out: Record<string, unknown> = { ...input, command: `${ensure} && ${execArgs.join(" ")}` };
