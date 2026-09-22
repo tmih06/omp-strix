@@ -246,6 +246,10 @@ export function strixBash(pi: ExtensionAPI) {
     label: "Bash",
     description:
       "Execute a bash command. While strix mode is sandboxed the command runs inside the shared container (mounted at /workspace); otherwise it runs on the host.",
+    // Result component replaces the call component in-place (native bash
+    // behavior) — without this the finished card renders below the running
+    // one, duplicating the command.
+    mergeCallAndResult: true,
     parameters: {
       type: "object",
       properties: {
