@@ -21,6 +21,61 @@ type ThemeLike = {
 };
 
 const MAX_OUTPUT = 200 * 1024; // tail-kept
+
+const ESC = String.fromCharCode(27);
+const ANSI_RE = new RegExp(`${ESC}\\[[0-9;]*[a-zA-Z]`, "g");
+const ANSI_PREFIX_RE = new RegExp(`^${ESC}\\[[0-9;]*[a-zA-Z]`);
+const RESET = `${ESC}[0m`;
+const visWidth = (s: string): number => [...s.replace(ANSI_RE, "")].length;
+const truncateVis = (s: string, w: number): string => {
+  if (visWidth(s) <= w) return s;
+  let out = "";
+  let n = 0;
+  let i = 0;
+  while (i < s.length && n < w) {
+    const m = s.slice(i).match(ANSI_PREFIX_RE);
+    if (m) {
+      out += m[0];
+      i += m[0].length;
+      continue;
+    }
+    const cp = s.codePointAt(i)!;
+    const ch = String.fromCodePoint(cp);
+    out += ch;
+    i += ch.length;
+    n++;
+  }
+  return out + RESET;
+};
+const padVis = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - visWidth(s)));
+/** Wrap a possibly-styled line to `w` visible columns (hard break, ANSI-safe). */
+const wrapVis = (s: string, w: number): string[] => {
+  if (visWidth(s) <= w) return [s];
+  const lines: string[] = [];
+  let cur = "";
+  let n = 0;
+  let i = 0;
+  while (i < s.length) {
+    const m = s.slice(i).match(ANSI_PREFIX_RE);
+    if (m) {
+      cur += m[0];
+      i += m[0].length;
+      continue;
+    }
+    const cp = s.codePointAt(i)!;
+    const ch = String.fromCodePoint(cp);
+    if (n >= w) {
+      lines.push(cur + RESET);
+      cur = "";
+      n = 0;
+    }
+    cur += ch;
+    i += ch.length;
+    n++;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+};
 const DEFAULT_TIMEOUT_S = 300;
 
 function text(s: string): { content: { type: string; text: string }[] } {
@@ -78,24 +133,112 @@ function containerCwd(requested: string | undefined, workspaceRoot: string): str
 }
 
 export function strixBash(pi: ExtensionAPI) {
-  const { Text, highlightCode } = pi.pi as {
-    Text: new (
-      text: string,
-      paddingX?: number,
-      paddingY?: number,
-    ) => {
-      render(width: number): readonly string[];
-    };
+  const { highlightCode } = pi.pi as {
     highlightCode?: (code: string, lang?: string, theme?: unknown) => string[];
   };
+
+  type BoxChars = {
+    topLeft: string;
+    topRight: string;
+    bottomLeft: string;
+    bottomRight: string;
+    horizontal: string;
+    vertical: string;
+    teeRight: string;
+    teeLeft: string;
+  };
+  type FullTheme = ThemeLike & {
+    boxRound: BoxChars;
+    sep: { dot: string };
+    bold(s: string): string;
+    styledSymbol?(key: string, color?: string): string;
+  };
+
   /** `$ cmd` / `🐳 cmd` preview with bash syntax highlighting. */
-  const commandLines = (cmd: string, sandboxed: boolean, theme: ThemeLike): string[] => {
+  const commandLines = (cmd: string, sandboxed: boolean, theme: FullTheme): string[] => {
     // lang.docker resolves to 🐳 (unicode), the nerd-font whale, or "docker"
     // (ascii) depending on the active symbol preset.
     const icon = sandboxed ? (theme.styledSymbol?.("lang.docker", "accent") ?? "▣") : "$";
     const prefix = theme.fg("dim", `${icon} `);
     const highlighted = highlightCode?.(cmd, "bash", theme) ?? cmd.split("\n");
     return highlighted.map((l, i) => (i === 0 ? `${prefix}${l}` : `   ${l}`));
+  };
+
+  /** Status header line: `<icon> <title>` matching renderStatusLine's shape. */
+  const statusHeader = (
+    theme: FullTheme,
+    opts: { icon?: string; title: string; meta?: string[] },
+  ): string => {
+    const title = theme.fg("accent", opts.title);
+    let line = opts.icon ? `${opts.icon} ${title}` : title;
+    const meta = (opts.meta ?? []).filter((m) => m.trim().length > 0);
+    if (meta.length) line += ` ${theme.fg("dim", meta.join(theme.sep.dot))}`;
+    return line;
+  };
+
+  /**
+   * Bordered output card mirroring pi-tui's renderOutputBlock: rounded frame,
+   * status-colored border, `╭─── Title ───╮` header bar, `├─── Output` section
+   * divider, `╰───╯` footer. pi.pi doesn't re-export the real one, so this is a
+   * faithful local replica.
+   */
+  const frameCard = (
+    theme: FullTheme,
+    opts: {
+      width: number;
+      header?: string;
+      state?: "success" | "error" | "warning" | "running" | "pending";
+      sections: { label?: string; lines: string[] }[];
+      footer?: string;
+    },
+  ): string[] => {
+    const b = theme.boxRound;
+    const w = Math.max(0, opts.width);
+    const borderColor =
+      opts.state === "error"
+        ? "error"
+        : opts.state === "warning"
+          ? "warning"
+          : opts.state === "running" || opts.state === "pending"
+            ? "accent"
+            : "dim";
+    const border = (s: string) => theme.fg(borderColor, s);
+    const padL = " ";
+    const padR = " ";
+    const contentW = Math.max(1, w - 2 - 1 - 1); // borders + padding
+
+    const bar = (left: string, right: string, label?: string): string => {
+      const cap = b.horizontal.repeat(3);
+      const leftG = `${left}${cap}`;
+      if (!label) {
+        const fill = Math.max(0, w - visWidth(leftG) - visWidth(right));
+        return `${border(leftG)}${border(b.horizontal.repeat(fill))}${border(right)}`;
+      }
+      const raw = ` ${label} `;
+      const maxLabel = Math.max(0, w - visWidth(leftG) - visWidth(right));
+      const trimmed = truncateVis(raw, maxLabel);
+      const fill = Math.max(0, w - visWidth(leftG) - visWidth(trimmed) - visWidth(right));
+      return `${border(leftG)}${trimmed}${border(b.horizontal.repeat(fill))}${border(right)}`;
+    };
+
+    const rows: string[] = [bar(b.topLeft, b.topRight, opts.header)];
+    opts.sections.forEach((sec, i) => {
+      if (sec.label) rows.push(bar(b.teeRight, b.teeLeft, sec.label));
+      else if (i > 0) rows.push(bar(b.teeRight, b.teeLeft));
+      for (const line of sec.lines) {
+        for (const wrapped of wrapVis(line.trimEnd(), contentW)) {
+          rows.push(`${border(b.vertical)}${padL}${padVis(wrapped, contentW)}${padR}${border(b.vertical)}`);
+        }
+      }
+    });
+    if (opts.footer) {
+      rows.push(bar(b.teeRight, b.teeLeft));
+      for (const wrapped of wrapVis(opts.footer, contentW)) {
+        rows.push(`${border(b.vertical)}${padL}${padVis(wrapped, contentW)}${padR}${border(b.vertical)}`);
+      }
+    }
+    rows.push(bar(b.bottomLeft, b.bottomRight));
+    return rows;
   };
 
   return {
@@ -112,17 +255,27 @@ export function strixBash(pi: ExtensionAPI) {
       },
       required: ["command"],
     },
-    // Renders the call as `▣ <command>` when the sandbox is active — the
-    // icon marks container execution; `$` prefix on the host path.
-    renderCall(args: Record<string, unknown>, _opts: unknown, theme: ThemeLike) {
+    renderCall(args: Record<string, unknown>, opts: { spinnerFrame?: number }, theme: FullTheme) {
       const cmd = typeof args?.command === "string" ? args.command : "";
       const sandboxed = activeSandbox() !== null && !/^\s*docker\s/.test(cmd);
-      return new Text(commandLines(cmd, sandboxed, theme).join("\n"), 1, 0);
+      const running = opts?.spinnerFrame !== undefined;
+      const icon = running
+        ? theme.styledSymbol?.("status.running", "accent")
+        : theme.styledSymbol?.("status.pending", "muted");
+      return {
+        render: (width: number) =>
+          frameCard(theme, {
+            width,
+            header: statusHeader(theme, { icon, title: "Bash" }),
+            state: running ? "running" : "pending",
+            sections: [{ lines: commandLines(cmd, sandboxed, theme) }],
+          }),
+      };
     },
     renderResult(
       result: { content?: { type: string; text?: string }[]; details?: Json; isError?: boolean },
       _opts: unknown,
-      theme: ThemeLike,
+      theme: FullTheme,
       args?: Record<string, unknown>,
     ) {
       const cmd = typeof args?.command === "string" ? args.command : "";
@@ -130,15 +283,31 @@ export function strixBash(pi: ExtensionAPI) {
       const out = result.content?.find((c) => c.type === "text")?.text ?? "";
       const exitCode = typeof result.details?.exitCode === "number" ? result.details.exitCode : undefined;
       const ms = typeof result.details?.durationMs === "number" ? result.details.durationMs : undefined;
-      const footerBits = [
+      const timedOut = result.details?.timedOut === true;
+      const isError = result.isError === true;
+      const state = timedOut ? "warning" : isError ? "error" : "success";
+      const icon = isError
+        ? theme.styledSymbol?.("status.error", "error")
+        : timedOut
+          ? theme.styledSymbol?.("status.warning", "warning")
+          : theme.styledSymbol?.("tool.bash", "accent");
+      const meta = [
         exitCode !== undefined ? `exit ${exitCode}` : undefined,
         ms !== undefined ? `${(ms / 1000).toFixed(1)}s` : undefined,
-        result.details?.timedOut === true ? "timed out" : undefined,
-      ].filter(Boolean);
-      const footer = footerBits.length ? theme.fg("dim", `\n${footerBits.join(" · ")}`) : "";
-      const head = commandLines(cmd, sandboxed, theme).join("\n");
-      const body = `${head}\n${out}${footer}`;
-      return new Text(body, 1, 0);
+        timedOut ? "timed out" : undefined,
+      ].filter((x): x is string => Boolean(x));
+      return {
+        render: (width: number) =>
+          frameCard(theme, {
+            width,
+            header: statusHeader(theme, { icon, title: "Bash", meta }),
+            state,
+            sections: [
+              { lines: commandLines(cmd, sandboxed, theme) },
+              { label: "Output", lines: out.split("\n") },
+            ],
+          }),
+      };
     },
     async execute(
       _id: string,
