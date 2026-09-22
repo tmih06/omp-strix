@@ -369,10 +369,11 @@ Every one of these tools writes to state the rest of the scan reads. Reaching fo
 - NOTES — \`create_note\` / \`list_notes\` / \`get_note\` / \`update_note\` / \`delete_note\`: the scan's shared scratchpad, visible to every agent. Write a note for a durable cross-agent fact that is not a finding and not coverage — a working credential set, a discovered endpoint inventory, an enumerated tenant list, a rate-limit quirk the next agent needs. \`update_note\` to keep a living inventory current; \`delete_note\` only for something now wrong or superseded. Check \`list_notes\`/\`get_note\` before recon work so you build on what is already mapped instead of redoing it.
 - ARTIFACTS — \`record_artifact\` / \`list_artifacts\`: the scan's shared credential and object-reference ledger. Record every credential, session token, API key, and object reference (user id, tenant id, UUID) the moment it is captured — hunters replay them for BOLA/IDOR sweeps and authenticated testing. Before testing authenticated endpoints, call \`list_artifacts\` and reuse what recon already harvested.
 - PLAN — \`update_plan\` / \`get_plan\`: the scan's structured task decomposition. The root agent maintains it — break the target into phases (recon → enumerate → test → exploit → verify), assign statuses, update as work progresses. Every agent reads it with \`get_plan\` to see the current decomposition and where their task fits.
+- ATTACK PATH — \`record_attack_hop\` / \`get_attack_path\`: the engagement's directed exploit-chain graph. Record each hop (surface →exploit→ vuln →auth→ access →pivot→ objective) with evidence; the root agent reads the full graph to compose kill-chains for the report.
 - THREAT MODEL — \`get_threat_model\` / \`amend_threat_model\` / \`save_threat_model\`: covered above. \`save_threat_model\` REPLACES the whole document and clears amendments, so it is for establishing the baseline or folding amendments in (normally root) — to correct part of an existing model, \`amend_threat_model\` instead.
 - COVERAGE — \`record_coverage\` / \`update_coverage\` / \`list_coverage\`: covered above. One row per surface+risk; correct an existing row with \`update_coverage\`, never a second \`record_coverage\`.
 - RESEARCH — \`web_search\`: pull fresh, target-specific external knowledge — latest bypasses, WAF evasions, DB-/framework-specific syntax, CVE and advisory detail — before falling back to memorized payloads, and refresh payload corpora mid-spray.
-- SPAWN WORK — \`task\`: delegate a focused subtask to a specialist child (see the multi-agent rules below for when to spawn and how to scope it). Use the strix agent types: \`strix-recon\`, \`strix-hunter\`, \`strix-validator\`, \`strix-reporter\`. Give it the target to model against and what is already known.
+- SPAWN WORK — \`task\`: delegate a focused subtask to a specialist child (see the multi-agent rules below for when to spawn and how to scope it). Use the strix agent types: \`strix-recon\`, \`strix-hunter\`, \`strix-validator\`, \`strix-reporter\`, \`strix-privesc\`, \`strix-pivot\`. Give it the target to model against and what is already known.
 - TRACK CHILDREN — \`hub op:"list"\`: your live map of every agent and its status. Check it before spawning (to confirm no existing agent already covers the scope) and before finishing (to confirm no child is still running).
 - STEER CHILDREN — \`hub op:"send"\`: send a running child new information, a course correction, or a request to wrap up, without killing it.
 - BLOCK ON CHILDREN — \`hub op:"wait"\`: block until a child reports back when your next move genuinely depends on its results. If you can keep making progress in parallel, keep working instead of waiting.
@@ -485,6 +486,8 @@ WHITE-BOX (source code provided):
 - Found authentication code issues? → Spawn a \`strix-hunter\` for authentication analysis
 - Hunter finds potential vulnerability? → Spawn a \`strix-validator\`
 - Validation confirms? → Spawn a \`strix-reporter\` that files the report AND its inline fix (\`code_locations\` + \`fix_pr_body\`) in one shot — no separate fixing agent
+- Foothold with low-priv shell? → Spawn a \`strix-privesc\` agent for local privilege escalation
+- Need lateral movement or AD path? → Spawn a \`strix-pivot\` agent for tunneling and credential replay
 
 VULNERABILITY WORKFLOW (MANDATORY FOR EVERY FINDING):
 

@@ -1906,6 +1906,44 @@ Returns the complete report body — description, technical analysis, PoC, evide
   },
 };
 
+// ---------------------------------------------------------------------------
+// thought — structured reasoning trace (CAI-style)
+// ---------------------------------------------------------------------------
+
+const thought: ToolDef = {
+  name: "thought",
+  label: "Thought",
+  description: `Record a structured reasoning step — hypothesis, evidence, next action — so the scan's decision trail is auditable.
+
+Use this when you're about to make a non-trivial decision: which vuln class to test next, whether a finding is worth escalating, how to chain two primitives. The thought is persisted to the scan state and shows up in the final report's reasoning trace.`,
+  parameters: {
+    type: "object",
+    properties: {
+      hypothesis: S("The hypothesis or decision being reasoned about."),
+      evidence: S("The evidence supporting or refuting it."),
+      next_action: S("What you'll do next based on this reasoning."),
+    },
+    required: ["hypothesis", "evidence", "next_action"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const hypothesis = str(params, "hypothesis").trim();
+    const evidence = str(params, "evidence").trim();
+    const nextAction = str(params, "next_action").trim();
+    if (!hypothesis || !evidence || !nextAction) {
+      return json({ success: false, error: "hypothesis, evidence, and next_action are all required" });
+    }
+    const note = addNote(dir, {
+      category: "finding",
+      title: `Thought: ${hypothesis.slice(0, 60)}`,
+      content: `**Hypothesis:** ${hypothesis}\n\n**Evidence:** ${evidence}\n\n**Next action:** ${nextAction}`,
+      tags: ["thought"],
+      agent: callerAgent(ctx),
+    });
+    return json({ success: true, note_id: note.id });
+  },
+};
 export const STRIX_TOOLS: ToolDef[] = [
   think,
   loadSkill,
@@ -1932,5 +1970,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   updatePlan,
   getPlanTool,
   fetchUrl,
+  thought,
+
   finishScan,
 ];

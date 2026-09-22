@@ -124,7 +124,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ruby ruby-dev build-essential libcurl4-openssl-dev libffi-dev \
        libxml2-dev libxslt1-dev zlib1g-dev \
-    && gem install wpscan --no-document \
+    && gem install wpscan --no-document --bindir /usr/local/bin \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------

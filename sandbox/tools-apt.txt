@@ -27,12 +27,12 @@ gobuster
 dirsearch
 ffuf
 nikto
-sqlmap
 
 # --- credentials / cracking ---
 hydra
 john
 hashcat
+pocl-opencl-icd
 
 # --- SMB / Windows / AD ---
 enum4linux
@@ -54,3 +54,5 @@ openssl
 ca-certificates
 unzip
 libcurl4
+libxml2
+libxslt1.1

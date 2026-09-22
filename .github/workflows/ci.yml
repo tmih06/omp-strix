@@ -77,7 +77,7 @@ jobs:
                      interactsh-client semgrep sg ast-grep trivy gitleaks trufflehog hurl \
                      prowler checkov wpscan radare2 binwalk onesixtyone arp-scan nbtscan pwn ropper \
                      gau waybackurls anew qsreplace unfurl hakrawler assetfinder x8 \
-                     prowler checkov wpscan r2 binwalk onesixtyone arp-scan nbtscan \
+                     nxc enum4linux-ng smbmap jwt_tool paramspider dalfox feroxbuster kxss \
                      python3 pip3 git jq curl wget openssl socat; do
               command -v $t >/dev/null || { echo "MISSING: $t"; exit 1; }
             done
