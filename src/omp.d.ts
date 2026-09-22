@@ -6,7 +6,8 @@
 declare module "@oh-my-pi/pi-coding-agent" {
   export interface ExtensionUIContext {
     notify(message: string, level?: "info" | "warning" | "error"): void;
-    setTheme(name: string): Promise<{ success: boolean; error?: string }>;
+    setTheme(theme: unknown): Promise<{ success: boolean; error?: string }>;
+    readonly theme?: unknown;
     setWorkingMessage(text: string): void;
     setTitle?(title: string): void;
     setWidget?(key: string, content: unknown, opts?: unknown): void;

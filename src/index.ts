@@ -51,6 +51,8 @@ interface StrixState {
    * would end the scan and kill the sandbox mid-run.
    */
   ownerSessionId: string | null;
+  /** Theme object active before /strix switched to strix-red. */
+  prevTheme: unknown;
 }
 
 const strix: StrixState = {
@@ -61,6 +63,7 @@ const strix: StrixState = {
   sandboxStarting: null,
   sandboxEnabled: true,
   ownerSessionId: null,
+  prevTheme: null,
 };
 
 /** Session id of the ctx that emitted this event, or null when unknown. */
@@ -303,6 +306,15 @@ async function deactivate(
   strix.systemPrompt = null;
   strix.scanStarted = false;
   strix.ownerSessionId = null;
+  // Restore the pre-strix theme (captured as a Theme object at activation).
+  if (strix.prevTheme) {
+    try {
+      await (ctx.ui as { setTheme?: (t: unknown) => Promise<unknown> }).setTheme?.(strix.prevTheme);
+    } catch {
+      /* theme restore is best-effort */
+    }
+    strix.prevTheme = null;
+  }
   endScan();
   try {
     (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", "");
@@ -360,8 +372,12 @@ export default function (pi: ExtensionAPI) {
       await pi.setActiveTools([...preTools.filter((t) => t !== "goal"), ...TOOL_NAMES]);
       strix.active = true;
       strix.ownerSessionId = eventSessionId(ctx);
-
-      const themeResult = await ctx.ui.setTheme("strix-red");
+      // Capture the active theme NAME — setTheme rejects Theme objects
+      // ("Direct theme object not supported"), so the name is the only
+      // restorable handle. pi.pi re-exports @oh-my-pi/pi-tui/theme.
+      strix.prevTheme =
+        (pi.pi as { getCurrentThemeName?: () => string | undefined }).getCurrentThemeName?.() ?? null;
+      const themeResult = (await ctx.ui.setTheme?.("strix-red")) ?? { success: false, error: "no UI" };
       if (!themeResult.success) {
         ctx.ui.notify(`Theme 'strix-red' not loaded: ${themeResult.error}`, "warning");
       }
