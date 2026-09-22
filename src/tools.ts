@@ -5,6 +5,8 @@
  * them in their tools list).
  */
 
+import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { cvssBaseScore } from "./cvss";
 import { listSkills, loadSkillBody } from "./prompt";
@@ -1944,6 +1946,126 @@ Use this when you're about to make a non-trivial decision: which vuln class to t
     return json({ success: true, note_id: note.id });
   },
 };
+
+// ---------------------------------------------------------------------------
+// terminal — persistent interactive shell sessions (CAI-style)
+// ---------------------------------------------------------------------------
+interface TerminalSession {
+  id: string;
+  proc: ChildProcess;
+  buffer: string;
+  createdAt: string;
+  lastUsed: string;
+}
+
+const terminalSessions = new Map<string, TerminalSession>();
+let terminalCounter = 0;
+
+const terminal: ToolDef = {
+  name: "terminal",
+  label: "Terminal",
+  description: `Run commands in a persistent interactive shell session — for SSH, nc, msfconsole, python REPLs, and other stateful tools.
+
+Unlike bash (one-shot), terminal keeps a session alive across calls. Use session_id to send input to an existing session, or omit to spawn a new one. The session runs inside the sandbox when active.
+
+Actions:
+- spawn (default): start a new session, return its id
+- send: write input to a session (session_id + input required)
+- read: drain the session's output buffer (session_id required)
+- kill: terminate a session (session_id required)
+- list: show all active sessions`,
+  parameters: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["spawn", "send", "read", "kill", "list"],
+        description: "What to do (default: spawn).",
+      },
+      session_id: S("Session id for send/read/kill."),
+      input: S("Input to write for send (newline appended automatically)."),
+      command: S("Command to run for spawn (default: bash)."),
+    },
+  },
+  async execute(_id, params) {
+    const action = str(params, "action") || "spawn";
+    const sessionId = str(params, "session_id").trim();
+
+    if (action === "list") {
+      const sessions = [...terminalSessions.values()].map((s) => ({
+        id: s.id,
+        created_at: s.createdAt,
+        last_used: s.lastUsed,
+        buffer_size: s.buffer.length,
+      }));
+      return json({ success: true, sessions });
+    }
+
+    if (action === "spawn") {
+      const command = str(params, "command") || "bash";
+      const id = `term-${++terminalCounter}`;
+      const proc = spawn("bash", ["-c", command], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb" },
+      });
+      const session: TerminalSession = {
+        id,
+        proc,
+        buffer: "",
+        createdAt: new Date().toISOString(),
+        lastUsed: new Date().toISOString(),
+      };
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        session.buffer += chunk.toString("utf8");
+        if (session.buffer.length > 64 * 1024) session.buffer = session.buffer.slice(-64 * 1024);
+      });
+      proc.stderr?.on("data", (chunk: Buffer) => {
+        session.buffer += chunk.toString("utf8");
+        if (session.buffer.length > 64 * 1024) session.buffer = session.buffer.slice(-64 * 1024);
+      });
+      proc.on("exit", () => {
+        session.buffer += "\n[session exited]";
+      });
+      terminalSessions.set(id, session);
+      return json({
+        success: true,
+        session_id: id,
+        message: `Session ${id} spawned. Use send/read to interact.`,
+      });
+    }
+
+    const session = terminalSessions.get(sessionId);
+    if (!session) {
+      return json({
+        success: false,
+        error: `Session '${sessionId}' not found. Use list to see active sessions.`,
+      });
+    }
+
+    if (action === "send") {
+      const input = str(params, "input");
+      if (!input) return json({ success: false, error: "input is required for send" });
+      session.proc.stdin?.write(`${input}\n`);
+      session.lastUsed = new Date().toISOString();
+      return json({ success: true, session_id: sessionId, message: "Input sent" });
+    }
+
+    if (action === "read") {
+      const output = session.buffer;
+      session.buffer = "";
+      session.lastUsed = new Date().toISOString();
+      return json({ success: true, session_id: sessionId, output: output || "(no output)" });
+    }
+
+    if (action === "kill") {
+      session.proc.kill("SIGTERM");
+      terminalSessions.delete(sessionId);
+      return json({ success: true, session_id: sessionId, message: "Session killed" });
+    }
+
+    return json({ success: false, error: `Unknown action '${action}'` });
+  },
+};
 export const STRIX_TOOLS: ToolDef[] = [
   think,
   loadSkill,
@@ -1971,6 +2093,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   getPlanTool,
   fetchUrl,
   thought,
+  terminal,
 
   finishScan,
 ];
