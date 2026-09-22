@@ -48,6 +48,7 @@ import {
   scanDir,
   writeFinalReport,
 } from "./state";
+import { generateTOTP } from "./totp";
 
 type Json = Record<string, unknown>;
 
@@ -2376,6 +2377,48 @@ The session is stored at \`strix/scans/<id>/auth_state.json\` and can be loaded 
     });
   },
 };
+
+// ---------------------------------------------------------------------------
+// totp — zero-dependency TOTP generator for MFA flows
+// ---------------------------------------------------------------------------
+
+const totp: ToolDef = {
+  name: "totp",
+  label: "TOTP",
+  description: `Generate a 6-digit TOTP token from a base32 secret — for MFA-protected login flows.
+
+Use this when the target requires TOTP-based 2FA. The secret is the base32-encoded seed (e.g. from a QR code or \`otpauth://\` URI). Returns the current 6-digit token.`,
+  parameters: {
+    type: "object",
+    properties: {
+      secret: S("The base32-encoded TOTP secret."),
+      time_step: { type: "number", description: "Time step in seconds (default 30)." },
+      digits: { type: "number", description: "Token length (default 6)." },
+    },
+    required: ["secret"],
+  },
+  async execute(_id, params) {
+    const secret = str(params, "secret").trim();
+    if (!secret) return json({ success: false, error: "secret is required" });
+    const timeStep =
+      typeof (params as Record<string, unknown>).time_step === "number"
+        ? ((params as Record<string, unknown>).time_step as number)
+        : 30;
+    const digits =
+      typeof (params as Record<string, unknown>).digits === "number"
+        ? ((params as Record<string, unknown>).digits as number)
+        : 6;
+    try {
+      const token = generateTOTP(secret, timeStep, digits);
+      return json({ success: true, token, time_step: timeStep, digits });
+    } catch (err) {
+      return json({
+        success: false,
+        error: `TOTP generation failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  },
+};
 export const STRIX_TOOLS: ToolDef[] = [
   think,
   loadSkill,
@@ -2412,5 +2455,6 @@ export const STRIX_TOOLS: ToolDef[] = [
   listDegradationTool,
 
   loginAndSaveSession,
+  totp,
   finishScan,
 ];
