@@ -1,2 +1,9 @@
 node_modules/
 dist
+
+# scan artifacts / local output
+inventory.json
+js_*.txt
+recon/
+recon-*/
+workspace/
