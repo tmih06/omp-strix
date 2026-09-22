@@ -1,0 +1,25 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "omp-strix",
+  "owner": {
+    "name": "tmih06"
+  },
+  "metadata": {
+    "description": "Strix adversarial security-testing mode for omp",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "omp-strix",
+      "description": "Strix adversarial security-testing mode — /strix toggles a full multi-agent pentest workflow",
+      "version": "0.1.0",
+      "source": {
+        "source": "github",
+        "repo": "tmih06/omp-strix",
+        "ref": "master"
+      },
+      "category": "security",
+      "homepage": "https://github.com/tmih06/omp-strix"
+    }
+  ]
+}

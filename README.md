@@ -14,16 +14,23 @@ Adversarial security-testing mode for [oh-my-pi](https://github.com/can1357/oh-m
 
 ## Install
 
+Marketplace (recommended — auto-update via `omp plugin upgrade` or `marketplace.autoUpdate`):
+
+```bash
+omp plugin marketplace add tmih06/omp-strix
+omp plugin install omp-strix@omp-strix
+```
+
+From git (pinned copy — re-run install to update):
+
+```bash
+omp plugin install github:tmih06/omp-strix
+```
+
 Local checkout (development):
 
 ```bash
 omp plugin link /path/to/omp-strix
-```
-
-From git:
-
-```bash
-omp plugin install github:tmih06/omp-strix
 ```
 
 ## Usage

@@ -305,6 +305,10 @@ export function getThreatModel(dir: string, target: string): ThreatModel | null 
   return readJson<ThreatModel>(join(dir, "threat-models", `${threatSlug(target)}.json`));
 }
 
+export function listThreatModels(dir: string): ThreatModel[] {
+  return listJson<ThreatModel>(join(dir, "threat-models"));
+}
+
 export function putThreatModel(dir: string, model: ThreatModel): void {
   atomicWrite(join(dir, "threat-models", `${threatSlug(model.target)}.json`), JSON.stringify(model, null, 2));
 }

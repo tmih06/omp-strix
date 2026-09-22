@@ -16,6 +16,16 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run check
+      - name: Assert tag matches package.json and marketplace catalog versions
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(jq -r .version package.json)
+          cat=$(jq -r '.plugins[0].version' .omp-plugin/marketplace.json)
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$cat" ]; then
+            echo "::error::version drift: tag=$tag package.json=$pkg marketplace=$cat — bump all three"
+            exit 1
+          fi
       - name: Pack tarball (prod files only — `files` whitelist in package.json)
         run: mkdir -p dist && npm pack --pack-destination dist
 

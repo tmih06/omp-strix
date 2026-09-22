@@ -25,6 +25,7 @@ import {
   listCoverage,
   listNotes,
   listReports,
+  listThreatModels,
   putCoverage,
   putNote,
   putReport,
@@ -477,9 +478,24 @@ Returns found: false when nothing has been derived yet — derive one and share 
   async execute(_id, params) {
     const dir = scanDir();
     if (!dir) return noScan();
-    const model = getThreatModel(dir, str(params, "target"));
-    if (!model) return json({ found: false, target: str(params, "target") });
-    return json({ found: true, target: model.target, model: model.model, amendments: model.amendments });
+    const target = str(params, "target");
+    const model = getThreatModel(dir, target);
+    if (model) {
+      return json({ found: true, target: model.target, model: model.model, amendments: model.amendments });
+    }
+    // Slug lookup missed — the caller's target spelling differs from the one
+    // used at save time. If the scan has exactly one model, return it; else
+    // name the available targets so the caller can retry with the right key.
+    const all = listThreatModels(dir);
+    if (all.length === 1) {
+      const only = all[0];
+      return json({ found: true, target: only.target, model: only.model, amendments: only.amendments });
+    }
+    return json({
+      found: false,
+      target,
+      available_targets: all.map((m) => m.target),
+    });
   },
 };
 
