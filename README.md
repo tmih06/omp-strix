@@ -14,11 +14,15 @@ Adversarial security-testing mode for [oh-my-pi](https://github.com/can1357/oh-m
 
 ## Install
 
-```bash
-# local checkout (development)
-omp plugin link /path/to/omp-strix
+Local checkout (development):
 
-# from git
+```bash
+omp plugin link /path/to/omp-strix
+```
+
+From git:
+
+```bash
 omp plugin install github:tmih06/omp-strix
 ```
 
