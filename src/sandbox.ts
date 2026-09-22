@@ -27,9 +27,7 @@ export function sandboxImage(): string {
   return process.env.STRIX_SANDBOX_IMAGE?.trim() || DEFAULT_IMAGE;
 }
 
-function run(
-  args: string[],
-): Promise<{ code: number; stdout: string; stderr: string }> {
+function run(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const { promise, resolve } = Promise.withResolvers<{
     code: number;
     stdout: string;

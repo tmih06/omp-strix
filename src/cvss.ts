@@ -59,10 +59,8 @@ export function cvssBaseScore(breakdown: Record<string, string>): CvssResult | s
     if (!(b[key] in METRIC_VALUES.CIA)) return `cvss_breakdown ${key} invalid: ${b[key]}`;
   }
 
-  const iss =
-    1 - (1 - METRIC_VALUES.CIA[b.C]) * (1 - METRIC_VALUES.CIA[b.I]) * (1 - METRIC_VALUES.CIA[b.A]);
-  const impact =
-    b.S === "U" ? 6.42 * iss : 7.52 * (iss - 0.029) - 3.25 * Math.pow(iss - 0.02, 15);
+  const iss = 1 - (1 - METRIC_VALUES.CIA[b.C]) * (1 - METRIC_VALUES.CIA[b.I]) * (1 - METRIC_VALUES.CIA[b.A]);
+  const impact = b.S === "U" ? 6.42 * iss : 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15;
   const exploitability =
     8.22 * METRIC_VALUES.AV[b.AV] * METRIC_VALUES.AC[b.AC] * prTable[b.PR] * METRIC_VALUES.UI[b.UI];
 

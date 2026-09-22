@@ -1,24 +1,21 @@
-# omp-strix sandbox image — essential pentest tooling on Debian slim.
-# Replaces strix's dedicated sandbox image; built on first use by the plugin.
+# omp-strix sandbox image — pentest tooling on Debian slim.
+# Tool lists live in tools-apt.txt / tools-pip.txt; add a line to add a tool.
+# CI publishes multi-arch images to GHCR on changes to this directory.
 FROM debian:bookworm-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # recon / network
-    nmap masscan dnsutils whois iputils-ping traceroute net-tools iproute2 \
-    netcat-openbsd socat openssl \
-    # web
-    curl wget gobuster sqlmap dirsearch \
-    # pip-installed recon (httpx, wafw00f, arjun)
-    # brute force
-    hydra john \
-    # scripting / glue
-    python3 python3-pip python3-venv git jq ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN pip3 install --no-cache-dir --break-system-packages \
-    httpx wafw00f arjun 2>/dev/null || pip3 install --no-cache-dir httpx wafw00f arjun
+# Manifest-driven install: comments/blank lines stripped, one layer each.
+COPY tools-apt.txt tools-pip.txt /tmp/
+RUN grep -v '^\s*#' /tmp/tools-apt.txt | grep -v '^\s*$' | tr '\n' ' ' > /tmp/apt.list \
+    && apt-get update \
+    && xargs -a /tmp/apt.list apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && grep -v '^\s*#' /tmp/tools-pip.txt | grep -v '^\s*$' | tr '\n' ' ' > /tmp/pip.list \
+    && xargs -a /tmp/pip.list pip3 install \
+    && rm -f /tmp/apt.list /tmp/pip.list /tmp/tools-*.txt
 
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

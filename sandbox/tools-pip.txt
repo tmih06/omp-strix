@@ -1,0 +1,5 @@
+# pip packages installed into the sandbox image — one per line.
+# Add a Python tool by appending its PyPI name here.
+httpx
+wafw00f
+arjun

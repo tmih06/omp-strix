@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { cvssBaseScore } from "./cvss";
 import { listSkills, loadSkillBody } from "./prompt";
 import { markSandboxActive, stopSandbox } from "./sandbox";
+import type { Report } from "./state";
 import {
   activeScan,
   addCoverage,
@@ -31,7 +32,6 @@ import {
   scanDir,
   writeFinalReport,
 } from "./state";
-import type { Report } from "./state";
 
 type Json = Record<string, unknown>;
 
@@ -224,10 +224,7 @@ Returns each note's id, title, category, tags, author (agent_name), and a conten
     const notes = listNotes(dir)
       .filter((n) => !category || n.category === category)
       .filter(
-        (n) =>
-          !search ||
-          n.title.toLowerCase().includes(search) ||
-          n.content.toLowerCase().includes(search),
+        (n) => !search || n.title.toLowerCase().includes(search) || n.content.toLowerCase().includes(search),
       )
       .map((n) => ({
         note_id: n.id,
@@ -315,13 +312,7 @@ const deleteNote: ToolDef = {
 // coverage — shared ledger of what was assessed and how it closed
 // ---------------------------------------------------------------------------
 
-const COVERAGE_OUTCOMES = [
-  "reported",
-  "no_issue_found",
-  "ruled_out",
-  "not_applicable",
-  "needs_follow_up",
-];
+const COVERAGE_OUTCOMES = ["reported", "no_issue_found", "ruled_out", "not_applicable", "needs_follow_up"];
 const EVIDENCE_REQUIRED = new Set(["ruled_out", "not_applicable", "needs_follow_up"]);
 
 const recordCoverage: ToolDef = {
@@ -653,7 +644,10 @@ function validateCvssBreakdown(breakdown: unknown): string[] {
   return errors;
 }
 
-function validateIdentifiers(cve: string | null, cwe: string | null): {
+function validateIdentifiers(
+  cve: string | null,
+  cwe: string | null,
+): {
   cve: string | null;
   cwe: string | null;
   errors: string[];
@@ -707,7 +701,7 @@ function validateFixVerification(
   locations: Record<string, unknown>[] | null,
   fixVerification: string | null,
 ): string[] {
-  if (!locations || !locations.some((l) => l.fix_after)) return [];
+  if (!locations?.some((l) => l.fix_after)) return [];
   if ((fixVerification ?? "").trim()) return [];
   return [
     "fix_verification is REQUIRED when any code_location carries a 'fix_after' - a suggestion a reviewer can click to apply must be verified first. State, in order: (1) security closure - re-trace the source->sink path through the PATCHED code and say why it is now blocked; (2) bypass review - name the equivalent sinks, sibling call sites, and alternate malicious input classes you checked; (3) preserved behavior - the legitimate inputs, APIs, and error semantics that still work; (4) how each was checked (executed vs. reasoned), naming any unrun check as an explicit gap. If you cannot make these statements, drop 'fix_after' and leave the location informational.",
@@ -746,19 +740,23 @@ function findingClassOf(report: Report): string {
 }
 
 function normalizeTitle(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 /** Deterministic dedupe: normalized title + target match against existing reports. */
-function findDuplicate(
-  dir: string,
-  title: string,
-  target: string,
-): Report | null {
+function findDuplicate(dir: string, title: string, target: string): Report | null {
   const t = normalizeTitle(title);
   const tgt = target.trim().toLowerCase();
   for (const r of listReports(dir)) {
-    if (normalizeTitle(String(r.title ?? "")) === t && String(r.target ?? "").trim().toLowerCase() === tgt) {
+    if (
+      normalizeTitle(String(r.title ?? "")) === t &&
+      String(r.target ?? "")
+        .trim()
+        .toLowerCase() === tgt
+    ) {
       return r;
     }
   }
@@ -767,9 +765,7 @@ function findDuplicate(
 
 const CVSS_BREAKDOWN_SCHEMA = {
   type: "object",
-  properties: Object.fromEntries(
-    Object.keys(CVSS_VALID).map((k) => [k, { type: "string" }]),
-  ),
+  properties: Object.fromEntries(Object.keys(CVSS_VALID).map((k) => [k, { type: "string" }])),
   required: Object.keys(CVSS_VALID),
 };
 
@@ -815,13 +811,28 @@ If you get a duplicate_of response, do NOT retry — move on to other testing.`,
       },
       fix_verification: OPT_S("Required when any code_location has fix_after."),
       fix_pr_body: OPT_S("Optional PR body for the fix."),
-      http_exchange_ids: { type: "array", items: { type: "string" }, description: "Optional related exchange ids." },
+      http_exchange_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional related exchange ids.",
+      },
     },
     required: [
-      "title", "description", "impact", "target", "technical_analysis",
-      "poc_description", "poc_script_code", "remediation_steps", "evidence",
-      "assumptions", "counterevidence", "confidence", "severity_change_conditions",
-      "fix_effort", "cvss_breakdown",
+      "title",
+      "description",
+      "impact",
+      "target",
+      "technical_analysis",
+      "poc_description",
+      "poc_script_code",
+      "remediation_steps",
+      "evidence",
+      "assumptions",
+      "counterevidence",
+      "confidence",
+      "severity_change_conditions",
+      "fix_effort",
+      "cvss_breakdown",
     ],
   },
   async execute(_id, params, _s, _u, ctx) {
@@ -849,10 +860,7 @@ If you get a duplicate_of response, do NOT retry — move on to other testing.`,
     const locations = normalizeCodeLocations(p.code_locations);
     if (locations) errors.push(...validateCodeLocations(locations));
     errors.push(...validateFixVerification(locations, strOrNull(p, "fix_verification")));
-    const { cve, cwe, errors: idErrors } = validateIdentifiers(
-      strOrNull(p, "cve"),
-      strOrNull(p, "cwe"),
-    );
+    const { cve, cwe, errors: idErrors } = validateIdentifiers(strOrNull(p, "cve"), strOrNull(p, "cwe"));
     errors.push(...idErrors);
     if (errors.length) return json({ success: false, error: "Validation failed", errors });
 
@@ -945,16 +953,32 @@ Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS br
       introduced_by: OPT_S("Direct dependency that pulls this in, if transitive."),
       dependency_path: OPT_S("Dependency chain string."),
       manifest_path: S("Repo-relative path of the lockfile/manifest where the version was observed."),
-      reachability: { ...S("not_imported | imported | vulnerable_symbol_used | reachable_call_path | unknown"), enum: [...VALID_REACHABILITY] },
+      reachability: {
+        ...S("not_imported | imported | vulnerable_symbol_used | reachable_call_path | unknown"),
+        enum: [...VALID_REACHABILITY],
+      },
       reachability_evidence: OPT_S("Evidence for the reachability claim."),
       contextual_cvss_breakdown: CVSS_BREAKDOWN_SCHEMA,
-      contextual_cvss_reasoning: S("What you observed in this codebase that justifies the contextual rating."),
+      contextual_cvss_reasoning: S(
+        "What you observed in this codebase that justifies the contextual rating.",
+      ),
     },
     required: [
-      "title", "description", "target", "cve", "package_name", "installed_version",
-      "package_ecosystem", "impact", "remediation_steps", "assumptions",
-      "advisory_cvss", "fix_effort", "manifest_path",
-      "contextual_cvss_breakdown", "contextual_cvss_reasoning",
+      "title",
+      "description",
+      "target",
+      "cve",
+      "package_name",
+      "installed_version",
+      "package_ecosystem",
+      "impact",
+      "remediation_steps",
+      "assumptions",
+      "advisory_cvss",
+      "fix_effort",
+      "manifest_path",
+      "contextual_cvss_breakdown",
+      "contextual_cvss_reasoning",
     ],
   },
   async execute(_id, params, _s, _u, ctx) {
@@ -963,8 +987,15 @@ Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS br
     const p = params as Record<string, unknown>;
     const errors: string[] = [];
     for (const name of [
-      "title", "description", "target", "package_name", "installed_version",
-      "package_ecosystem", "impact", "remediation_steps", "assumptions",
+      "title",
+      "description",
+      "target",
+      "package_name",
+      "installed_version",
+      "package_ecosystem",
+      "impact",
+      "remediation_steps",
+      "assumptions",
     ]) {
       if (!str(p, name).trim()) errors.push(`${name} cannot be empty`);
     }
@@ -983,8 +1014,14 @@ Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS br
     }
     const manifestPath = str(p, "manifest_path").trim();
     if (!manifestPath) {
-      errors.push("manifest_path is required: the repo-relative path of the lockfile/manifest where the vulnerable version was observed");
-    } else if (manifestPath.startsWith("/") || manifestPath.includes("\\") || manifestPath.split("/").some((s) => s === "" || s === "." || s === "..")) {
+      errors.push(
+        "manifest_path is required: the repo-relative path of the lockfile/manifest where the vulnerable version was observed",
+      );
+    } else if (
+      manifestPath.startsWith("/") ||
+      manifestPath.includes("\\") ||
+      manifestPath.split("/").some((s) => s === "" || s === "." || s === "..")
+    ) {
       errors.push(`manifest_path must be a relative path within the repository, got '${manifestPath}'`);
     }
     const advisoryCvss = typeof p.advisory_cvss === "number" ? p.advisory_cvss : null;
@@ -998,7 +1035,9 @@ Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS br
     errors.push(...validateCvssBreakdown(p.contextual_cvss_breakdown));
     const reasoning = str(p, "contextual_cvss_reasoning").trim();
     if (!reasoning) {
-      errors.push("contextual_cvss_reasoning is required: state what you observed in this codebase that justifies the contextual rating");
+      errors.push(
+        "contextual_cvss_reasoning is required: state what you observed in this codebase that justifies the contextual rating",
+      );
     }
     if (errors.length) return json({ success: false, error: "Validation failed", errors });
 
@@ -1037,7 +1076,8 @@ Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS br
 
     let evidence = `**Advisory evidence:** \`${cve}\` applies to \`${metadata.package_name}\` at installed version \`${metadata.installed_version}\`.`;
     if (metadata.fixed_version) evidence += ` The advisory is fixed in \`${metadata.fixed_version}\`.`;
-    if (metadata.introduced_by) evidence += `\n\n**Transitive dependency:** introduced by the direct dependency \`${metadata.introduced_by}\`.`;
+    if (metadata.introduced_by)
+      evidence += `\n\n**Transitive dependency:** introduced by the direct dependency \`${metadata.introduced_by}\`.`;
     if (metadata.dependency_path) evidence += `\n\n**Dependency chain:** \`${metadata.dependency_path}\``;
 
     const report = addReport(dir, "dep", {
@@ -1086,7 +1126,8 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
       confidence: { ...OPT_S("high | medium | low"), enum: ["high", "medium", "low"] },
       fix_effort: { ...OPT_S("trivial | low | medium | high"), enum: ["trivial", "low", "medium", "high"] },
       cvss_breakdown: CVSS_BREAKDOWN_SCHEMA,
-      cve: OPT_S(""), cwe: OPT_S(""),
+      cve: OPT_S(""),
+      cwe: OPT_S(""),
       code_locations: { type: "array", items: { type: "object" } },
       http_exchange_ids: { type: "array", items: { type: "string" } },
     },
@@ -1100,7 +1141,8 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
     const reason = str(p, "update_reason").trim();
     if (!reason) return json({ success: false, error: "update_reason is required" });
     const report = getReport(dir, reportId);
-    if (!report) return json({ success: false, error: `Report with id '${reportId}' not found`, report_id: reportId });
+    if (!report)
+      return json({ success: false, error: `Report with id '${reportId}' not found`, report_id: reportId });
 
     const errors: string[] = [];
     const changes: Record<string, unknown> = {};
@@ -1144,7 +1186,9 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
         errors.push(...validateFixVerification(locations, (changes.fix_verification as string) ?? null));
         changes.code_locations = locations;
       } else {
-        errors.push("code_locations were dropped as unusable - every location needs a relative 'file' and an integer 'start_line'");
+        errors.push(
+          "code_locations were dropped as unusable - every location needs a relative 'file' and an integer 'start_line'",
+        );
       }
     }
     const { cve, cwe, errors: idErrors } = validateIdentifiers(strOrNull(p, "cve"), strOrNull(p, "cwe"));
@@ -1152,9 +1196,14 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
     if (cve) changes.cve = cve;
     if (cwe) changes.cwe = cwe;
     if (Array.isArray(p.http_exchange_ids)) changes.http_exchange_ids = p.http_exchange_ids;
-    if (errors.length) return json({ success: false, error: "Validation failed", errors, report_id: reportId });
+    if (errors.length)
+      return json({ success: false, error: "Validation failed", errors, report_id: reportId });
     if (!Object.keys(changes).length) {
-      return json({ success: false, error: `Report '${reportId}' already says this - nothing in your update changes it`, report_id: reportId });
+      return json({
+        success: false,
+        error: `Report '${reportId}' already says this - nothing in your update changes it`,
+        report_id: reportId,
+      });
     }
 
     // Keep the revision inside the finding's class.
@@ -1176,7 +1225,8 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
       if (!reasoning.trim()) {
         return json({
           success: false,
-          error: "contextual_cvss_reasoning is required: a dependency finding is re-rated with the cvss_breakdown observed in this codebase together with the reasoning a reader can check",
+          error:
+            "contextual_cvss_reasoning is required: a dependency finding is re-rated with the cvss_breakdown observed in this codebase together with the reasoning a reader can check",
           report_id: reportId,
         });
       }

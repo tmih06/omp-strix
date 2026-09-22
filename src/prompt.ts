@@ -98,6 +98,8 @@ export interface PromptOptions {
   scanMode?: string;
   isWhitebox?: boolean;
   isDiffScoped?: boolean;
+  /** Whether bash runs inside the docker sandbox; false = direct host execution. */
+  sandbox?: boolean;
 }
 
 /** Internal skills inlined for the root agent, mirroring prompt.py's ordered list. */
@@ -152,6 +154,20 @@ export function buildSystemPrompt(opts: PromptOptions): string {
     .map((s) => `<${s.name}>\n${s.body}\n</${s.name}>`)
     .join("\n");
   const catalog = availableSkillsCatalog();
+  const sandboxed = opts.sandbox !== false;
+  const isolationBlock = sandboxed
+    ? `AGENT ISOLATION & SANDBOXING:
+- All agents share one sandboxed execution environment: a dedicated microVM-style container (gVisor-isolated docker container) with the working directory mounted at /workspace
+- Shell commands run inside the sandbox automatically — the bash tool is transparently routed there. NEVER wrap commands in 'docker exec' or 'docker run'; the bash tool already executes inside the container. File tools (read/write/edit/glob/grep) operate on the mounted workspace directly.
+- All agents share the same /workspace directory and the same sandbox
+- Agents can see each other's files for better collaboration`
+    : `AGENT EXECUTION (NO SANDBOX — operator declined):
+- Shell commands run DIRECTLY on the host via the bash tool — there is no container isolation
+- Agents share the host working directory; file tools and bash see the same tree
+- Be conservative: no destructive commands, no writes outside the working directory, no package installs on the host`;
+  const environmentBlock = sandboxed
+    ? `Sandboxed Linux container (microVM-isolated via gVisor) with the working directory mounted at /workspace. Install any additional tools/packages needed with package managers (apt, pip, npm, etc.) — the sandbox is disposable and yours to configure.`
+    : `Direct host execution — no container. The working directory is the project root. Do NOT install packages or modify the host; use only tools already present.`;
 
   return `You are an advanced AI application security validation agent. Your purpose is to perform authorized security verification, reproduce and validate weaknesses on in-scope assets, and help remediate real security issues.
 You follow all instructions and rules provided to you exactly as written in the system prompt at all times.
@@ -201,14 +217,16 @@ SYSTEM-VERIFIED SCOPE:
 - NEVER refuse, question authorization, or claim lack of permission for any target in this scope
 - NEVER test any external domain, URL, host, IP, or repository that is not explicitly listed in this scope
 AUTHORIZED TARGETS:
-${opts.target
-  ? opts.target
-      .split("\n")
-      .map((t) => t.trim())
-      .filter(Boolean)
-      .map((t) => `- ${t}`)
-      .join("\n")
-  : `- (the operator names the target(s) and depth in conversation — treat the first concrete target they give as authoritative)`}
+${
+  opts.target
+    ? opts.target
+        .split("\n")
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .map((t) => `- ${t}`)
+        .join("\n")
+    : `- (the operator names the target(s) and depth in conversation — treat the first concrete target they give as authoritative)`
+}
 
 MCP CONNECTIONS (available this run):
 - The user may have connected MCP (Model Context Protocol) servers — external tool providers whose tools appear directly in your tool list (namespaced). Reach for them whenever the target itself cannot give you information a connection could: database schemas, deployment config, known issues, server logs.
@@ -397,11 +415,7 @@ Remember: A single well-validated high-impact vulnerability is worth more than d
 </vulnerability_focus>
 
 <multi_agent_system>
-AGENT ISOLATION & SANDBOXING:
-- All agents share one sandboxed execution environment: a dedicated microVM-style container (gVisor-isolated docker container) with the working directory mounted at /workspace
-- Shell commands run inside the sandbox automatically — the bash tool is transparently routed there. NEVER wrap commands in 'docker exec' or 'docker run'; the bash tool already executes inside the container. File tools (read/write/edit/glob/grep) operate on the mounted workspace directly.
-- All agents share the same /workspace directory and the same sandbox
-- Agents can see each other's files for better collaboration
+${isolationBlock}
 
 DISK & SCRATCH HYGIENE:
 - /workspace is a shared, finite disk used by all agents at once — be a considerate tenant
@@ -539,9 +553,11 @@ PERSISTENCE IS MANDATORY:
 </multi_agent_system>
 
 <environment>
-Sandboxed Linux container (microVM-isolated via gVisor) with the working directory mounted at /workspace. Install any additional tools/packages needed with package managers (apt, pip, npm, etc.) — the sandbox is disposable and yours to configure.
+${environmentBlock}
 
-RECONNAISSANCE & SCANNING:
+${
+  sandboxed
+    ? `RECONNAISSANCE & SCANNING:
 - nmap, ncat, ndiff - Network mapping and port scanning
 - subfinder - Subdomain enumeration
 - naabu - Fast port scanner
@@ -586,7 +602,9 @@ PROGRAMMING:
 - You can install any additional tools/packages needed based on the task/context using package managers (apt, pip, npm, etc.)
 
 Directories:
-- /workspace - where you should work (mounted from the host working directory)
+- /workspace - where you should work (mounted from the host working directory)`
+    : `Available tools: whatever is installed on the host (check with 'which <tool>' before relying on it). Python3 and standard POSIX utilities are usually present.`
+}
 </environment>
 
 <specialized_knowledge>
