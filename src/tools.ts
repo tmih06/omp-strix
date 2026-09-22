@@ -2228,6 +2228,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   updateNote,
   deleteNote,
   recordCoverage,
+
   updateCoverage,
   listCoverageTool,
   getThreatModelTool,

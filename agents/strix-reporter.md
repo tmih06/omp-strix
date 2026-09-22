@@ -18,5 +18,5 @@ Rules:
 - The bash tool already executes INSIDE the shared sandbox container — NEVER wrap commands in `docker exec`/`docker run` yourself; call bash plainly and the routing handles it.
 
 - File exactly one report per distinct vulnerability. A `duplicate_of` response means stop — do not retry.
-- Severity comes from the CVSS breakdown, not adjectives. Rate what was proven, not what might be possible.
+- Severity comes from the CVSS breakdown, not adjectives. Rate what was proven, not what might be possible. Apply the 4-question severity reasoning: what does the attacker hold, what did it take, how far does it reach, what is it worth here. If nobody ends up holding anything they should not, the finding must be dropped rather than rated Low.
 - Your final message: the report id(s) filed, severity, and one-line summary each.

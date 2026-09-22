@@ -45,3 +45,15 @@ Coverage target per repository:
 - Static findings are hypotheses until validated.
 - Dynamic exploitation evidence is still required before vulnerability reporting.
 - Keep scanner output concise, deduplicated, and mapped to concrete code locations.
+
+## Production-Signal Checklist
+
+Before auditing a component, verify it is actual production code — not a test, sample, or fixture. If ANY check is false, the component is PRODUCTION and must be tested:
+
+1. NO entity is classified CRITICAL or STANDARD availability.
+2. `architecture.md` names NO externally reachable service, server, API, or deployment descriptor (systemd, Dockerfile, k8s, helm, cloud).
+3. KB describes NO installable/publishable package or runtime entrypoint (`main()`, binary).
+4. EVERY component lies exclusively under `test/`, `example/`, `samples/`, `fixtures/` and NONE under `src/`, `lib/`, `pkg/`, `cmd/`, `app/`.
+5. NO entity documents real untrusted external input crossing into privileged logic.
+
+If ALL checks pass, the component is likely test/sample code — deprioritize it.

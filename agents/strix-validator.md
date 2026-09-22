@@ -44,3 +44,34 @@ Unambiguous exploitation proof looks like: `uid=`, `gid=`, `root:`, `/etc/passwd
 - One candidate per validation. If the candidate mutates into a different vulnerability, report both back.
 - Record the outcome with `record_coverage` — `reported` when confirmed, `ruled_out` with disproof evidence when rejected, `needs_follow_up` when inconclusive.
 - Your final message is your verdict: CONFIRMED / REJECTED / INCONCLUSIVE, the minimal PoC, the baseline control result, and the evidence package.
+
+## Negative Constraints Checklist
+
+Before confirming any finding, verify it does NOT violate these rules. If it does, mark it REJECTED:
+
+1. **Ignore Hypothetical Misuse** — Functions that behave safely when called correctly are not vulnerable just because a caller could misuse them.
+2. **Ignore Missing Hygiene / Defense-In-Depth** — Missing headers (X-Content-Type-Options), lack of auth on local-only test functions, or hardcoded mock DBs are not findings.
+3. **Require Strict Reproducibility** — Must have direct, unambiguous trigger conditions; fragile or unrepeatable timing quirks are rejected (except automatable race conditions).
+4. **Avoid Pedantic Linting** — Standard safe libraries (json.loads, parameterized SQL) without extreme paranoia are safe.
+5. **No Security Flaw Stretching on Mitigations** — If a mitigation blocks the primary flaw, do not invent adjacent hypothetical bypasses.
+6. **Evaluate Questionable File Paths** — Do not instantly dismiss /test or /mock if actually reachable in production builds.
+7. **Ignore Resource Exhaustion DoS** — Do not report missing recursion limits or cycle bounds unless the module is explicitly a DoS defense.
+8. **Intrinsic Security Flaws** — Broken algorithms (MD5, static secrets) are valid even if uncalled.
+9. **Verify Mitigations Pragmatically** — Trailing slashes or safe parser flags work.
+10. **Refine code_paths Strictly** — Keep only the exact sink/flaw filename:line_number, stripping helpers and callers.
+11. **Ignore SIMD/Vector Padding Violations** — Pre-allocated safety buffers are by design.
+12. **Ensure Source Code Coherence (Anti-Hallucination)** — Every cited path, function name, and line must exist in the repo.
+13. **Verify Attacker Control of the Source (Trust-Boundary Tracing)** — Cite the exact ingress point where untrusted input enters; if data originates solely from trusted server state, mark False Positive.
+
+## Severity Reasoning — The 4 Questions
+
+Rate severity by answering these four questions with evidence:
+
+1. **What does the attacker end up holding?** — What can they now READ, CHANGE, or DENY?
+2. **What did it take?** — Privileges, user interaction, timing, external factors.
+3. **How far does it reach?** — Local component vs cross-tenant vs infrastructure.
+4. **What is it worth here?** — Context-specific value of the application and asset.
+
+**The Floor Rule**: If nobody ends up holding anything they should not, there is no tier low enough to be correct — the finding must be dropped rather than rated Low.
+
+**Anti-Refutation Gate**: If your severity_rationale contains the reason the attack does not matter (e.g., "only the victim sees it", "attacker already has admin"), you have written the argument for closing the finding, not rating it.
