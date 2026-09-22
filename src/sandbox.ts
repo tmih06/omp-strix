@@ -56,8 +56,13 @@ export async function containerRunning(): Promise<boolean> {
  * at /workspace. Returns an error string on failure.
  */
 export async function ensureSandbox(cwd: string): Promise<string | null> {
-  if (await containerRunning()) return null;
-  await run(["rm", "-f", NAME]); // stale container: recreate so mount matches cwd
+  if (await containerRunning()) {
+    // A surviving container may still mount a previous session's cwd —
+    // verify the bind source matches before reusing it.
+    const mounts = await run(["inspect", "-f", "{{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}", NAME]);
+    if (mounts.stdout.includes(`${cwd}:${WORKSPACE}`)) return null;
+  }
+  await run(["rm", "-f", NAME]); // stale or wrong-mount container: recreate
 
   const image = sandboxImage();
   const inspect = await run(["image", "inspect", image]);

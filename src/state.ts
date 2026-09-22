@@ -104,6 +104,22 @@ export function activeScan(): ActiveScan | null {
   return readJson<ActiveScan>(ACTIVE_FILE);
 }
 
+/**
+ * Resume an interrupted scan: returns the live ActiveScan when active.json
+ * exists and its scan dir has no ended.json marker (i.e. the previous
+ * session died before finish_scan/deactivate ran).
+ */
+export function resumableScan(): ActiveScan | null {
+  const scan = readJson<ActiveScan>(ACTIVE_FILE);
+  if (!scan?.dir) return null;
+  try {
+    if (existsSync(join(scan.dir, "ended.json"))) return null;
+  } catch {
+    return null;
+  }
+  return scan;
+}
+
 // ---- scan metrics (subagent usage) -----------------------------------------
 
 export interface UsageTotals {

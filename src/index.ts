@@ -28,7 +28,7 @@ import {
   rewritePathInput,
   stopSandbox,
 } from "./sandbox";
-import { activeScan, beginScan, collectSubagentMetrics, endScan } from "./state";
+import { activeScan, beginScan, collectSubagentMetrics, endScan, resumableScan } from "./state";
 import { STRIX_TOOLS } from "./tools";
 
 const TOOL_NAMES = STRIX_TOOLS.map((t) => t.name);
@@ -413,6 +413,17 @@ export default function (pi: ExtensionAPI) {
     if (strix.ownerSessionId && eventSessionId(ctx) !== strix.ownerSessionId) return;
     if (!strix.scanStarted) {
       strix.scanStarted = true;
+      // Resume an interrupted scan: active.json survives a crash/kill, and
+      // a scan dir without ended.json means the last session never closed
+      // it. Reuse the dir so notes/coverage/reports accumulate in place.
+      const prior = resumableScan();
+      if (prior) {
+        pi.setSessionName(`strix: ${prior.target.slice(0, 60)}`);
+        return {
+          systemPrompt: strix.systemPrompt,
+          message: `[strix] Resuming interrupted scan ${prior.scanId} of "${prior.target}" (started ${prior.startedAt}). Prior artifacts are in ${prior.dir} — read notes/, coverage/, reports/ and threat-models/ there before re-running work.`,
+        };
+      }
       const target = event.prompt?.trim() || "unspecified";
       beginScan(target, "conversation");
       pi.setSessionName(`strix: ${target.slice(0, 60)}`);
