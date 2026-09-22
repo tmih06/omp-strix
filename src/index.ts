@@ -25,18 +25,10 @@ import {
   rewriteBashInput,
   stopSandbox,
 } from "./sandbox";
-import {
-  activeScan,
-  beginScan,
-  endScan,
-  recordGoalSnapshot,
-  recordSubagentUsage,
-  resetScanMetrics,
-  scanMetrics,
-} from "./state";
+import { activeScan, beginScan, endScan, recordSubagentUsage, resetScanMetrics } from "./state";
 import { STRIX_TOOLS } from "./tools";
 
-const TOOL_NAMES = [...STRIX_TOOLS.map((t) => t.name), "goal"];
+const TOOL_NAMES = STRIX_TOOLS.map((t) => t.name);
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 interface StrixState {
@@ -279,7 +271,6 @@ function installTheme(): void {
 async function deactivate(
   pi: ExtensionAPI,
   ctx: { ui: { notify(m: string, l?: string): void } },
-  opts?: { skipGoalSteer?: boolean },
 ): Promise<void> {
   strix.active = false;
   restoreStatusLine(pi);
@@ -287,22 +278,7 @@ async function deactivate(
   strix.sandboxEnabled = true;
   strix.systemPrompt = null;
   strix.scanStarted = false;
-  if (strix.preTools) await pi.setActiveTools(strix.preTools);
-  strix.preTools = null;
   endScan();
-  // If the scan goal is still live, ask the model to drop it — the extension
-  // API has no programmatic goal handle, so this goes through the tool.
-  const goal = scanMetrics.goal;
-  if (!opts?.skipGoalSteer && goal && (goal.status === "active" || goal.status === "paused")) {
-    try {
-      pi.sendUserMessage?.(
-        'Strix mode was turned off. Call the goal tool with op "drop" to end goal tracking, then continue.',
-        { attribution: "agent" },
-      );
-    } catch {
-      /* goal tool may be gone already */
-    }
-  }
   try {
     (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", "");
   } catch {
@@ -423,26 +399,15 @@ export default function (pi: ExtensionAPI) {
     if (rewritten) return { input: rewritten };
   });
 
-  // Track the native goal record (tokens + wall-clock) while strix mode is on.
-  // The root agent creates the goal via the `goal` tool at scan start; this
-  // handler mirrors each update into the scan dir so finish_scan and the
-  // final report can read the latest counters.
-  pi.on("goal_updated", (event) => {
-    if (!strix.active) return;
-    const goal = (event as { goal?: unknown }).goal;
-    recordGoalSnapshot((goal ?? null) as Parameters<typeof recordGoalSnapshot>[0]);
-  });
-
-  // Goal accounting only covers the main session — accumulate subagent usage
-  // from `task` tool results so the scan's true token cost is reported.
+  // Subagent usage isn't in the main session's token accounting — accumulate
+  // it from `task` tool results so the scan's true cost is reported.
   pi.on("tool_result", async (event, ctx) => {
     if (!strix.active) return;
     const e = event as { toolName?: string; details?: unknown };
     // finish_scan ends the mode too — the tool can't reach this module's
-    // state, so the runner-side hook does the teardown. Skip the goal-drop
-    // steer: finish_scan already tells the model to complete the goal.
+    // state, so the runner-side hook does the teardown.
     if (e.toolName === "finish_scan") {
-      await deactivate(pi, ctx, { skipGoalSteer: true });
+      await deactivate(pi, ctx);
       return;
     }
     if (e.toolName !== "task" || !e.details || typeof e.details !== "object") return;

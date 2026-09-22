@@ -104,19 +104,7 @@ export function activeScan(): ActiveScan | null {
   return readJson<ActiveScan>(ACTIVE_FILE);
 }
 
-// ---- scan metrics (goal tracking + subagent usage) -------------------------
-
-/** Snapshot of the omp goal record (mirrors Goal in pi-tui). */
-export interface GoalSnapshot {
-  id: string;
-  objective: string;
-  status: string;
-  tokenBudget?: number;
-  tokensUsed: number;
-  timeUsedSeconds: number;
-  createdAt: number;
-  updatedAt: number;
-}
+// ---- scan metrics (subagent usage) -----------------------------------------
 
 export interface UsageTotals {
   input: number;
@@ -128,8 +116,6 @@ export interface UsageTotals {
 }
 
 export interface ScanMetrics {
-  /** Latest goal record from the `goal_updated` event (main session). */
-  goal: GoalSnapshot | null;
   /** Aggregated usage across `task` tool results (subagent runs). */
   subagentUsage: UsageTotals;
   subagentRuns: number;
@@ -148,24 +134,15 @@ const emptyUsage = (): UsageTotals => ({
 /** Process-wide metrics for the active scan. Shared across agent sessions
  *  because Bun caches this module once per process. */
 export const scanMetrics: ScanMetrics = {
-  goal: null,
   subagentUsage: emptyUsage(),
   subagentRuns: 0,
   subagentDurationMs: 0,
 };
 
 export function resetScanMetrics(): void {
-  scanMetrics.goal = null;
   scanMetrics.subagentUsage = emptyUsage();
   scanMetrics.subagentRuns = 0;
   scanMetrics.subagentDurationMs = 0;
-}
-
-/** Record the latest goal snapshot and mirror it into the scan dir. */
-export function recordGoalSnapshot(goal: GoalSnapshot | null): void {
-  scanMetrics.goal = goal;
-  const dir = scanDir();
-  if (dir) atomicWrite(join(dir, "goal.json"), JSON.stringify(goal, null, 2));
 }
 
 /** Accumulate usage from a `task` tool result's details.usage. */

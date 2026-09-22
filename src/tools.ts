@@ -1349,17 +1349,16 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     },
     required: ["executive_summary"],
   },
-  async execute(_id, params) {
+  async execute(_id, params, _s, _u, ctx) {
     const dir = scanDir();
     if (!dir) return noScan();
     const scan = activeScan();
     const reports = listReports(dir);
     const coverage = listCoverage(dir);
     const open = coverage.filter((e) => e.outcome === "needs_follow_up");
-    const goal = scanMetrics.goal;
-    const durationSeconds =
-      goal?.timeUsedSeconds ??
-      (scan?.startedAt ? Math.round((Date.now() - Date.parse(scan.startedAt)) / 1000) : null);
+    const usage = (
+      ctx as { sessionManager?: { getUsageStatistics?: () => { totalTokens?: number; cost?: number } } }
+    )?.sessionManager?.getUsageStatistics?.();
     const payload = {
       scan_id: scan?.scanId ?? null,
       target: scan?.target ?? null,
@@ -1368,12 +1367,14 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
       finished_at: new Date().toISOString(),
       executive_summary: str(params, "executive_summary"),
       metrics: {
-        duration_seconds: durationSeconds,
-        main_session_tokens: goal?.tokensUsed ?? null,
+        duration_seconds: scan?.startedAt
+          ? Math.round((Date.now() - Date.parse(scan.startedAt)) / 1000)
+          : null,
+        main_session_tokens: usage?.totalTokens ?? null,
+        main_session_cost: usage?.cost ?? null,
         subagent_tokens: scanMetrics.subagentUsage.totalTokens || null,
         subagent_runs: scanMetrics.subagentRuns,
         subagent_duration_ms: scanMetrics.subagentDurationMs || null,
-        goal_status: goal?.status ?? null,
       },
       findings: reports,
       coverage,
@@ -1385,8 +1386,7 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     await stopSandbox();
     return json({
       success: true,
-      message:
-        'Scan finished. Final report written (JSON + Markdown). Now call the goal tool with op "complete" to close goal tracking and show the final token/time report.',
+      message: "Scan finished. Final report written (JSON + Markdown).",
       report_path: join(dir, "final-report.md"),
       report_json_path: join(dir, "final-report.json"),
       findings: reports.length,

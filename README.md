@@ -52,10 +52,10 @@ Scan depth selects a `scan_modes` skill: `quick` (fast surface sweep), `standard
 On activation the plugin:
 
 1. Builds the strix system prompt (root-agent orchestration, methodology, skills catalog) and installs it via `before_agent_start`.
-2. Activates the 19-tool strix toolset plus the native `goal` tool (`defaultInactive` until then).
+2. Activates the 19-tool strix toolset (`defaultInactive` until then).
 3. Switches to the `strix-red` theme, shows a `◆ STRIX` status segment, and names the session `strix: <target>`.
 
-The root agent's first action is `goal {op:"create"}` — omp's native goal mode tracks tokens and wall-clock for the scan and shows live progress in the status line. `finish_scan` embeds the metrics in `final-report.json`; the agent then calls `goal {op:"complete"}` for the final token/time report. Subagent usage (from `task` tool results) is accumulated separately into `metrics.subagent_tokens` since goal accounting only covers the main session.
+`finish_scan` embeds scan metrics in `final-report.json`: wall-clock duration, main-session tokens/cost (from the session usage stats), and accumulated subagent usage from `task` tool results.
 
 On the first `bash` call the plugin pulls `ghcr.io/tmih06/omp-strix-sandbox:latest` (Debian slim + nmap, masscan, gobuster, sqlmap, hydra, john, nuclei, httpx, python3, …) and starts a shared container with the session cwd mounted at `/workspace`; every `bash` call is rewritten to `docker exec` into it. If the pull fails and `sandbox/Dockerfile` is present (source checkout), it builds locally instead. If Docker is unavailable, commands run on the host.
 
@@ -131,7 +131,6 @@ scans/<scanId>/
   coverage/<id>.json           -> one file per coverage entry
   threat-models/<slug>.json    -> { target, model, amendments[] }
   reports/vuln-NNNN.json       -> filed report (+ vuln-NNNN.md sibling)
-  goal.json                      -> latest goal record (tokens, wall-clock, status)
   final-report.json            -> finish_scan payload (+ final-report.md); includes metrics block
 ```
 
