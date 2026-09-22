@@ -12,7 +12,7 @@ declare module "@oh-my-pi/pi-coding-agent" {
     setWidget?(key: string, content: unknown, opts?: unknown): void;
     setStatus?(key: string, text: string): void;
     select?(opts: unknown): Promise<unknown>;
-    confirm?(opts: unknown): Promise<boolean>;
+    confirm?(title: string, message: string, opts?: unknown): Promise<boolean>;
     input?(opts: unknown): Promise<string>;
     editor?(opts: unknown): Promise<string>;
     setEditorText?(text: string): void;
@@ -52,14 +52,20 @@ declare module "@oh-my-pi/pi-coding-agent" {
       handler: (
         event: BeforeAgentStartEvent,
         ctx: ExtensionContext,
-      ) => Promise<{ systemPrompt?: string | string[]; message?: unknown } | void> | { systemPrompt?: string | string[]; message?: unknown } | void,
+      ) =>
+        | Promise<{ systemPrompt?: string | string[]; message?: unknown } | undefined>
+        | { systemPrompt?: string | string[]; message?: unknown }
+        | undefined,
     ): void;
     on(
       event: "tool_call",
       handler: (
         event: ToolCallEvent,
         ctx: ExtensionContext,
-      ) => Promise<{ block?: boolean; reason?: string; input?: Record<string, unknown> } | void> | { block?: boolean; reason?: string; input?: Record<string, unknown> } | void,
+      ) =>
+        | Promise<{ block?: boolean; reason?: string; input?: Record<string, unknown> } | undefined>
+        | { block?: boolean; reason?: string; input?: Record<string, unknown> }
+        | undefined,
     ): void;
     on(event: string, handler: (event: never, ctx: ExtensionContext) => unknown): void;
     registerTool(def: {

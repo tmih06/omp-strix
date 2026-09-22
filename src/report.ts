@@ -55,9 +55,7 @@ function n(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 function rec(v: unknown): Record<string, unknown> | null {
-  return v !== null && typeof v === "object" && !Array.isArray(v)
-    ? (v as Record<string, unknown>)
-    : null;
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 function title(v: unknown): string | null {
   const t = s(v);
@@ -95,7 +93,8 @@ export function renderReportMarkdown(report: Report): string {
   ];
   if (cvss !== null) metadata.push(["CVSS", cvss]);
   if (advisoryCvss !== null && advisoryCvss !== cvss) metadata.push(["Advisory CVSS", advisoryCvss]);
-  if (dep && s(dep.contextual_cvss_vector)) metadata.push(["Contextual CVSS Vector", dep.contextual_cvss_vector]);
+  if (dep && s(dep.contextual_cvss_vector))
+    metadata.push(["Contextual CVSS Vector", dep.contextual_cvss_vector]);
   const confidence = title(report.confidence);
   if (confidence) metadata.push(["Confidence", confidence]);
   const fixEffort = title(report.fix_effort);
@@ -140,7 +139,11 @@ export function renderReportMarkdown(report: Report): string {
       const start = n(loc.start_line);
       const end = n(loc.end_line);
       const lineRef =
-        start !== null ? (end !== null && end !== start ? ` (lines ${start}-${end})` : ` (line ${start})`) : "";
+        start !== null
+          ? end !== null && end !== start
+            ? ` (lines ${start}-${end})`
+            : ` (line ${start})`
+          : "";
       lines.push(`**Location ${i + 1}:** \`${file}\`${lineRef}`);
       if (s(loc.label)) lines.push(`  ${loc.label}`);
       const snippet = s(loc.snippet);
@@ -150,8 +153,18 @@ export function renderReportMarkdown(report: Report): string {
       }
       if (s(loc.fix_before) || s(loc.fix_after)) {
         lines.push("", "  **Suggested Fix:**", "```diff");
-        if (s(loc.fix_before)) lines.push(...String(loc.fix_before).split("\n").map((ln) => `- ${ln}`));
-        if (s(loc.fix_after)) lines.push(...String(loc.fix_after).split("\n").map((ln) => `+ ${ln}`));
+        if (s(loc.fix_before))
+          lines.push(
+            ...String(loc.fix_before)
+              .split("\n")
+              .map((ln) => `- ${ln}`),
+          );
+        if (s(loc.fix_after))
+          lines.push(
+            ...String(loc.fix_after)
+              .split("\n")
+              .map((ln) => `+ ${ln}`),
+          );
         lines.push("```");
       }
       lines.push("");

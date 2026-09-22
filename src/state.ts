@@ -14,19 +14,11 @@
  *       final-report.json              -> finish_scan payload (+ final-report.md)
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { renderFinalReportMarkdown, renderReportMarkdown, type FinalReportPayload } from "./report";
+import { type FinalReportPayload, renderFinalReportMarkdown, renderReportMarkdown } from "./report";
 
 export interface ActiveScan {
   scanId: string;
@@ -143,9 +135,7 @@ export function addNote(dir: string, note: Omit<Note, "id" | "createdAt" | "upda
 }
 
 export function listNotes(dir: string): Note[] {
-  return listJson<Note>(join(dir, "notes")).sort((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  return listJson<Note>(join(dir, "notes")).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function getNote(dir: string, id: string): Note | null {
@@ -208,7 +198,6 @@ export function deleteFile(dir: string, bucket: string, id: string): void {
   }
 }
 
-
 // ---- threat model ----------------------------------------------------------
 
 export interface ThreatModel {
@@ -235,10 +224,7 @@ export function getThreatModel(dir: string, target: string): ThreatModel | null 
 }
 
 export function putThreatModel(dir: string, model: ThreatModel): void {
-  atomicWrite(
-    join(dir, "threat-models", `${threatSlug(model.target)}.json`),
-    JSON.stringify(model, null, 2),
-  );
+  atomicWrite(join(dir, "threat-models", `${threatSlug(model.target)}.json`), JSON.stringify(model, null, 2));
 }
 
 // ---- reports ---------------------------------------------------------------
@@ -283,9 +269,7 @@ export function putReport(dir: string, report: Report): void {
 }
 
 export function listReports(dir: string): Report[] {
-  return listJson<Report>(join(dir, "reports")).sort((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  return listJson<Report>(join(dir, "reports")).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 // ---- final report ------------------------------------------------------------
@@ -304,8 +288,7 @@ export function callerAgent(ctx: unknown): string {
 
 export function sessionFileOf(ctx: unknown): string | null {
   if (ctx && typeof ctx === "object" && "sessionManager" in ctx) {
-    const sm = (ctx as { sessionManager?: { getSessionFile?: () => string | null } })
-      .sessionManager;
+    const sm = (ctx as { sessionManager?: { getSessionFile?: () => string | null } }).sessionManager;
     const file = sm?.getSessionFile?.();
     if (typeof file === "string" && file.length > 0) return file;
   }

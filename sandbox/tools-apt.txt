@@ -1,0 +1,27 @@
+# apt packages installed into the sandbox image — one per line.
+# Add a tool by appending its Debian package name here; the image rebuilds
+# automatically on push (CI publishes to GHCR).
+nmap
+masscan
+dnsutils
+whois
+iputils-ping
+traceroute
+net-tools
+iproute2
+netcat-openbsd
+socat
+openssl
+curl
+wget
+gobuster
+sqlmap
+dirsearch
+hydra
+john
+python3
+python3-pip
+python3-venv
+git
+jq
+ca-certificates

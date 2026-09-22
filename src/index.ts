@@ -23,7 +23,6 @@ import {
   markSandboxActive,
   recordSandbox,
   rewriteBashInput,
-  sandboxImage,
   stopSandbox,
 } from "./sandbox";
 import { activeScan, beginScan, endScan } from "./state";
@@ -40,6 +39,8 @@ interface StrixState {
   scanStarted: boolean;
   /** In-flight sandbox start, so concurrent bash calls don't double-start. */
   sandboxStarting: Promise<string | null> | null;
+  /** Whether bash is routed into the container this activation. */
+  sandboxEnabled: boolean;
 }
 
 const strix: StrixState = {
@@ -48,6 +49,7 @@ const strix: StrixState = {
   preTools: null,
   scanStarted: false,
   sandboxStarting: null,
+  sandboxEnabled: true,
 };
 
 // ── Status-line takeover ───────────────────────────────────────────────────
@@ -116,7 +118,18 @@ const STATUS_LINE_PRESET_SEGMENTS: Record<
   },
   full: {
     left: ["pi", "vim", "hostname", "model", "mode", "path", "git", "pr", "subagents"],
-    right: ["session_name", "cache_hit", "token_in", "token_out", "token_rate", "cache_read", "cost", "context_pct", "time_spent", "time"],
+    right: [
+      "session_name",
+      "cache_hit",
+      "token_in",
+      "token_out",
+      "token_rate",
+      "cache_read",
+      "cost",
+      "context_pct",
+      "time_spent",
+      "time",
+    ],
     separator: "powerline",
     segmentOptions: {
       model: { showThinkingLevel: true },
@@ -127,7 +140,19 @@ const STATUS_LINE_PRESET_SEGMENTS: Record<
   },
   nerd: {
     left: ["pi", "vim", "hostname", "model", "mode", "path", "git", "pr", "session", "subagents"],
-    right: ["session_name", "token_in", "token_out", "cache_read", "cache_write", "token_rate", "cost", "context_pct", "context_total", "time_spent", "time"],
+    right: [
+      "session_name",
+      "token_in",
+      "token_out",
+      "cache_read",
+      "cache_write",
+      "token_rate",
+      "cost",
+      "context_pct",
+      "context_total",
+      "time_spent",
+      "time",
+    ],
     separator: "powerline",
     segmentOptions: {
       model: { showThinkingLevel: true },
@@ -192,7 +217,8 @@ function applyStrixStatusLine(pi: ExtensionAPI): void {
   const def = STATUS_LINE_PRESET_SEGMENTS[preset] ?? STATUS_LINE_PRESET_SEGMENTS.default;
   const custom = preset === "custom";
   const left = (custom ? (s.get("statusLine.leftSegments") as string[] | undefined) : undefined) ?? def.left;
-  const right = (custom ? (s.get("statusLine.rightSegments") as string[] | undefined) : undefined) ?? def.right;
+  const right =
+    (custom ? (s.get("statusLine.rightSegments") as string[] | undefined) : undefined) ?? def.right;
   const separator = (s.get("statusLine.separator") as string | undefined) ?? def.separator;
   const segmentOptions = {
     ...(def.segmentOptions ?? {}),
@@ -207,7 +233,10 @@ function applyStrixStatusLine(pi: ExtensionAPI): void {
   }
   s.override("statusLine.preset", "custom");
   s.override("statusLine.leftSegments", newLeft);
-  s.override("statusLine.rightSegments", right.filter((id) => !HIDDEN_SEGMENTS.has(id)));
+  s.override(
+    "statusLine.rightSegments",
+    right.filter((id) => !HIDDEN_SEGMENTS.has(id)),
+  );
   s.override("statusLine.separator", separator);
   s.override("statusLine.segmentOptions", segmentOptions);
   // Suppress the below-bar hook-status lines so "◆ STRIX" isn't duplicated
@@ -231,25 +260,30 @@ function installTheme(): void {
   try {
     const themesDir = join(homedir(), ".omp", "agent", "themes");
     mkdirSync(themesDir, { recursive: true });
-    copyFileSync(
-      join(PLUGIN_ROOT, "themes", "strix-red.json"),
-      join(themesDir, "strix-red.json"),
-    );
+    copyFileSync(join(PLUGIN_ROOT, "themes", "strix-red.json"), join(themesDir, "strix-red.json"));
   } catch {
     /* theme install is best-effort */
   }
 }
 
-async function deactivate(pi: ExtensionAPI, ctx: { ui: { notify(m: string, l?: string): void } }): Promise<void> {
+async function deactivate(
+  pi: ExtensionAPI,
+  ctx: { ui: { notify(m: string, l?: string): void } },
+): Promise<void> {
   strix.active = false;
   restoreStatusLine(pi);
+  strix.sandboxStarting = null;
+  strix.sandboxEnabled = true;
   strix.systemPrompt = null;
   strix.scanStarted = false;
-  strix.sandboxStarting = null;
   if (strix.preTools) await pi.setActiveTools(strix.preTools);
   strix.preTools = null;
   endScan();
-  try { (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", ""); } catch { /* no UI */ }
+  try {
+    (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", "");
+  } catch {
+    /* no UI */
+  }
   markSandboxActive(false);
   await stopSandbox();
   ctx.ui.notify("Strix mode off.", "info");
@@ -270,8 +304,23 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      // Ask whether to run commands inside the docker sandbox. Declining
+      // skips the image pull entirely — bash runs on the host.
+      let sandbox = true;
+      if (ctx.hasUI && ctx.ui.confirm) {
+        try {
+          sandbox = await ctx.ui.confirm(
+            "Strix sandbox",
+            "Run shell commands inside a disposable docker container (pulls ghcr.io/tmih06/omp-strix-sandbox on first use)? Decline to run directly on the host.",
+          );
+        } catch {
+          sandbox = true;
+        }
+      }
+      strix.sandboxEnabled = sandbox && process.env.STRIX_SANDBOX !== "off";
+
       installTheme();
-      strix.systemPrompt = buildSystemPrompt({});
+      strix.systemPrompt = buildSystemPrompt({ sandbox: strix.sandboxEnabled });
       const preTools = pi.getActiveTools();
       strix.preTools = preTools;
       await pi.setActiveTools([...preTools, ...TOOL_NAMES]);
@@ -286,7 +335,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
       applyStrixStatusLine(pi);
       ctx.ui.notify(
-        "Strix mode on. Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit.",
+        strix.sandboxEnabled
+          ? "Strix mode on (sandboxed). Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit."
+          : "Strix mode on (NO sandbox — commands run on the host). Name the target and depth in your next message. /strix again to exit.",
         "info",
       );
     },
@@ -308,7 +359,7 @@ export default function (pi: ExtensionAPI) {
   // Route bash calls into the sandbox while strix mode is on; the container
   // starts lazily on the first call.
   pi.on("tool_call", async (event) => {
-    if (!strix.active) return;
+    if (!strix.active || !strix.sandboxEnabled) return;
     if (event.toolName !== "bash") return;
     if (!activeScan()) return; // no scan yet — nothing to sandbox against
     strix.sandboxStarting ??= (async () => {
