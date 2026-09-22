@@ -19,7 +19,12 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type FinalReportPayload, renderFinalReportMarkdown, renderReportMarkdown, renderSarif } from "./report";
+import {
+  type FinalReportPayload,
+  renderFinalReportMarkdown,
+  renderReportMarkdown,
+  renderSarif,
+} from "./report";
 
 export interface ActiveScan {
   scanId: string;
@@ -331,10 +336,7 @@ export interface Artifact {
   createdAt: string;
 }
 
-export function addArtifact(
-  dir: string,
-  artifact: Omit<Artifact, "id" | "createdAt">,
-): Artifact {
+export function addArtifact(dir: string, artifact: Omit<Artifact, "id" | "createdAt">): Artifact {
   const full: Artifact = { ...artifact, id: "", createdAt: new Date().toISOString() };
   writeEntry(join(dir, "artifacts"), "art", full);
   return full;
@@ -371,19 +373,33 @@ export interface AttackHop {
   createdAt: string;
 }
 
-export function addAttackHop(
-  dir: string,
-  hop: Omit<AttackHop, "id" | "createdAt">,
-): AttackHop {
+export function addAttackHop(dir: string, hop: Omit<AttackHop, "id" | "createdAt">): AttackHop {
   const full: AttackHop = { ...hop, id: "", createdAt: new Date().toISOString() };
   writeEntry(join(dir, "attack-path"), "hop", full);
   return full;
 }
 
 export function listAttackPath(dir: string): AttackHop[] {
-  return listJson<AttackHop>(join(dir, "attack-path")).sort((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  return listJson<AttackHop>(join(dir, "attack-path")).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// ---- plan — structured task decomposition for the scan ---------------------
+
+export interface PlanTask {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "blocked";
+  agent: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function putPlan(dir: string, tasks: PlanTask[]): void {
+  atomicWrite(join(dir, "plan.json"), JSON.stringify(tasks, null, 2));
+}
+
+export function getPlan(dir: string): PlanTask[] {
+  return readJson<PlanTask[]>(join(dir, "plan.json")) ?? [];
 }
 
 // ---- threat model ----------------------------------------------------------

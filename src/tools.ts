@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { cvssBaseScore } from "./cvss";
 import { listSkills, loadSkillBody } from "./prompt";
 import { markSandboxActive, stopSandbox } from "./sandbox";
-import type { Report } from "./state";
+import type { PlanTask, Report } from "./state";
 import {
   activeScan,
   addArtifact,
@@ -24,16 +24,18 @@ import {
   findArtifact,
   findCoverage,
   getNote,
+  getPlan,
   getReport,
   getThreatModel,
-  listAttackPath,
   listArtifacts,
+  listAttackPath,
   listCoverage,
   listNotes,
   listReports,
   listThreatModels,
   putCoverage,
   putNote,
+  putPlan,
   putReport,
   putThreatModel,
   scanDir,
@@ -860,13 +862,9 @@ const IMPACT_EVIDENCE = {
 /** SQLi claims need SQL-native proof, not a shell transcript from another bug. */
 const SQLI_NATIVE_EVIDENCE =
   /\b(sql|union select|information_schema|@@version|select .* from|sqlmap|syntax error|mysql|postgres|sqlite|ora-\d+|odbc|jdbc|query)\b/i;
-const RCE_TRANSCRIPT =
-  /\b(uid=|gid=|\/bin\/(ba)?sh|uname -a|whoami|id;|command execution|rce)\b/i;
+const RCE_TRANSCRIPT = /\b(uid=|gid=|\/bin\/(ba)?sh|uname -a|whoami|id;|command execution|rce)\b/i;
 
-function claimConsistencyErrors(
-  p: Record<string, unknown>,
-  cwe: string | null,
-): string[] {
+function claimConsistencyErrors(p: Record<string, unknown>, cwe: string | null): string[] {
   const errors: string[] = [];
   const corpus = [
     str(p, "evidence"),
@@ -915,8 +913,7 @@ function claimConsistencyErrors(
     );
   }
 
-  const isSqli =
-    cwe === "CWE-89" || /\bsql\s*injection\b|\bsqli\b/i.test(String(p.title ?? ""));
+  const isSqli = cwe === "CWE-89" || /\bsql\s*injection\b|\bsqli\b/i.test(String(p.title ?? ""));
   if (isSqli && RCE_TRANSCRIPT.test(corpus) && !SQLI_NATIVE_EVIDENCE.test(corpus)) {
     errors.push(
       "SQLi claim lacks SQL-native evidence — proof shows command-execution output only; data dumped via a different RCE bug does not prove SQL injection",
@@ -1491,7 +1488,10 @@ Kinds: credential (username/password, hash), session (cookie, session id), token
     if (!dir) return noScan();
     const kind = str(params, "kind").toLowerCase();
     if (!ARTIFACT_KINDS.includes(kind)) {
-      return json({ success: false, error: `Invalid kind '${kind}'. Must be one of: ${ARTIFACT_KINDS.join(", ")}` });
+      return json({
+        success: false,
+        error: `Invalid kind '${kind}'. Must be one of: ${ARTIFACT_KINDS.join(", ")}`,
+      });
     }
     const value = str(params, "value").trim();
     const source = str(params, "source").trim();
@@ -1588,6 +1588,76 @@ const getAttackPath: ToolDef = {
       return { from: h.from, to: h.to, via: h.via, evidence: h.evidence, agent: h.agent };
     });
     return json({ success: true, nodes: [...nodes], edges, hop_count: hops.length });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// plan — structured task decomposition for the scan
+// ---------------------------------------------------------------------------
+
+const updatePlan: ToolDef = {
+  name: "update_plan",
+  label: "Update Plan",
+  description: `Replace the scan's structured task plan — the root agent's decomposition of the engagement into ordered work items.
+
+Use this to maintain the scan's task tree: break the target into phases (recon → enumerate → test → exploit → verify), assign each a status, and update as work progresses. The plan is shared across agents and rendered into the system prompt so every agent sees the current decomposition.
+
+Each task: { id, content, status: pending|in_progress|completed|blocked }. Ids are stable — reuse them across updates.`,
+  parameters: {
+    type: "object",
+    properties: {
+      tasks: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            content: { type: "string" },
+            status: { type: "string", enum: ["pending", "in_progress", "completed", "blocked"] },
+          },
+          required: ["id", "content", "status"],
+        },
+        description: "The full task list — replaces the current plan.",
+      },
+    },
+    required: ["tasks"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const raw = (params as Record<string, unknown>).tasks;
+    if (!Array.isArray(raw)) return json({ success: false, error: "tasks must be an array" });
+    const now = new Date().toISOString();
+    const existing = new Map(getPlan(dir).map((t) => [t.id, t]));
+    const tasks = raw.map((t) => {
+      const r = t as Record<string, unknown>;
+      const id = String(r.id ?? "").trim() || `task-${Date.now().toString(36)}`;
+      const prev = existing.get(id);
+      return {
+        id,
+        content: String(r.content ?? "").trim(),
+        status: (["pending", "in_progress", "completed", "blocked"].includes(String(r.status))
+          ? String(r.status)
+          : "pending") as PlanTask["status"],
+        agent: callerAgent(ctx),
+        createdAt: prev?.createdAt ?? now,
+        updatedAt: now,
+      };
+    });
+    putPlan(dir, tasks);
+    return json({ success: true, task_count: tasks.length });
+  },
+};
+
+const getPlanTool: ToolDef = {
+  name: "get_plan",
+  label: "Get Plan",
+  description: `Read the scan's structured task plan — the current decomposition of the engagement into ordered work items with statuses.`,
+  parameters: { type: "object", properties: {} },
+  async execute() {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    return json({ success: true, tasks: getPlan(dir) });
   },
 };
 
@@ -1757,5 +1827,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   listArtifactsTool,
   recordAttackHop,
   getAttackPath,
+  updatePlan,
+  getPlanTool,
   finishScan,
 ];

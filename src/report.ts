@@ -283,14 +283,36 @@ function owaspTaxon(report: Report): string {
   const cwe = s(report.cwe) ?? "";
   const text = `${s(report.title) ?? ""} ${s(report.description) ?? ""}`.toLowerCase();
   const byCwe: Record<string, string> = {
-    "CWE-79": "A03", "CWE-89": "A03", "CWE-78": "A03", "CWE-94": "A03",
-    "CWE-90": "A03", "CWE-91": "A03", "CWE-917": "A03", "CWE-1336": "A03",
-    "CWE-918": "A10", "CWE-22": "A01", "CWE-23": "A01", "CWE-639": "A01",
-    "CWE-287": "A07", "CWE-306": "A07", "CWE-384": "A07", "CWE-798": "A07",
-    "CWE-352": "A01", "CWE-862": "A01", "CWE-863": "A01", "CWE-200": "A01",
-    "CWE-502": "A08", "CWE-1104": "A06", "CWE-1395": "A06",
-    "CWE-327": "A02", "CWE-328": "A02", "CWE-326": "A02", "CWE-916": "A02",
-    "CWE-16": "A05", "CWE-1004": "A05", "CWE-1021": "A05",
+    "CWE-79": "A03",
+    "CWE-89": "A03",
+    "CWE-78": "A03",
+    "CWE-94": "A03",
+    "CWE-90": "A03",
+    "CWE-91": "A03",
+    "CWE-917": "A03",
+    "CWE-1336": "A03",
+    "CWE-918": "A10",
+    "CWE-22": "A01",
+    "CWE-23": "A01",
+    "CWE-639": "A01",
+    "CWE-287": "A07",
+    "CWE-306": "A07",
+    "CWE-384": "A07",
+    "CWE-798": "A07",
+    "CWE-352": "A01",
+    "CWE-862": "A01",
+    "CWE-863": "A01",
+    "CWE-200": "A01",
+    "CWE-502": "A08",
+    "CWE-1104": "A06",
+    "CWE-1395": "A06",
+    "CWE-327": "A02",
+    "CWE-328": "A02",
+    "CWE-326": "A02",
+    "CWE-916": "A02",
+    "CWE-16": "A05",
+    "CWE-1004": "A05",
+    "CWE-1021": "A05",
   };
   if (byCwe[cwe]) return byCwe[cwe];
   if (/ssrf|server.side request/i.test(text)) return "A10";
@@ -390,7 +412,10 @@ export function renderSarif(payload: FinalReportPayload): string {
       locations: sarifLocations(r),
       partialFingerprints: {
         "strix/reportId": s(r.id) ?? "",
-        "strix/title": (s(r.title) ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+        "strix/title": (s(r.title) ?? "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim(),
       },
       properties: {
         severity: sev,

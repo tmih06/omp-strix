@@ -477,7 +477,8 @@ export default function (pi: ExtensionAPI) {
   // rm -rf /, fork bombs, block-device writes, or env-var exfiltration.
   const DANGEROUS_COMMANDS: { pattern: RegExp; reason: string }[] = [
     {
-      pattern: /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+(-[a-zA-Z]*r[a-zA-Z]*)?|(-[a-zA-Z]*r[a-zA-Z]*\s+)?-[a-zA-Z]*f[a-zA-Z]*)\s+(?:--\s+)?\/(\s|$|\*|etc|boot|bin|sbin|usr|lib|var|dev|proc|sys|root|home)/,
+      pattern:
+        /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+(-[a-zA-Z]*r[a-zA-Z]*)?|(-[a-zA-Z]*r[a-zA-Z]*\s+)?-[a-zA-Z]*f[a-zA-Z]*)\s+(?:--\s+)?\/(\s|$|\*|etc|boot|bin|sbin|usr|lib|var|dev|proc|sys|root|home)/,
       reason: "Recursive forced deletion of system-critical paths",
     },
     { pattern: /\bdd\b.*\bof\s*=\s*\/dev\//, reason: "Direct write to block device" },

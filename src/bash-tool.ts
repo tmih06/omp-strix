@@ -170,11 +170,7 @@ function hexPreview(raw: string, maxBytes = 256): string {
   return lines.join("\n");
 }
 
-function boundOutput(
-  raw: string,
-  timedOut: boolean,
-  timeoutS: number,
-): { text: string; savedTo?: string } {
+function boundOutput(raw: string, timedOut: boolean, timeoutS: number): { text: string; savedTo?: string } {
   const suffix = timedOut ? `\n\n[command timed out after ${timeoutS}s — partial output shown]` : "";
 
   // Binary content → hex preview, never raw bytes into context.
@@ -490,10 +486,10 @@ export function strixBash(pi: ExtensionAPI) {
         // bash -lc: login shell so user-installed tools (~/.local/bin,
         // ~/go/bin, pipx) resolve — plain `sh -c` skips profile PATH.
         const inner = `umask 000; cd ${JSON.stringify(containerCwd(cwd, sb.workspaceRoot))} && ${command}`;
-        const res = await run(
-          ["docker", "exec", "omp-strix-sandbox", "bash", "-lc", inner],
-          { timeoutS, signal },
-        );
+        const res = await run(["docker", "exec", "omp-strix-sandbox", "bash", "-lc", inner], {
+          timeoutS,
+          signal,
+        });
         const bounded = boundOutput(res.output, res.timedOut, timeoutS);
         const hint = res.code !== 0 ? (missingToolHint(res.output) ?? "") : "";
         return {
