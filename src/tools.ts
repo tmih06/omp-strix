@@ -8,6 +8,7 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { boundOutput, run } from "./bash-tool";
 import { cvssBaseScore } from "./cvss";
 import { listSkills, loadSkillBody } from "./prompt";
 import { markSandboxActive, stopSandbox } from "./sandbox";
@@ -2066,6 +2067,47 @@ Actions:
     return json({ success: false, error: `Unknown action '${action}'` });
   },
 };
+// ---------------------------------------------------------------------------
+// python — dedicated scripting for exploit dev (CAI-style)
+// ---------------------------------------------------------------------------
+
+const python: ToolDef = {
+  name: "python",
+  label: "Python",
+  description: `Run a Python script in the sandbox — for exploit development, payload encoding/decoding, crypto, and data processing.
+
+Unlike bash (which runs shell commands), python executes a script directly. Use it for: writing exploit PoCs, encoding/decoding payloads (base64, URL, hex), crypto operations (JWT signing, hash cracking), parsing tool output, and any task where a script is cleaner than a shell one-liner.
+
+The script runs inside the sandbox when active. stdout/stderr are captured and returned.`,
+  parameters: {
+    type: "object",
+    properties: {
+      code: S("The Python script to execute."),
+      timeout: { type: "number", description: "Timeout in seconds (default 60)." },
+    },
+    required: ["code"],
+  },
+  async execute(_id, params) {
+    const code = str(params, "code");
+    if (!code.trim()) return json({ success: false, error: "code is required" });
+    const timeoutS =
+      typeof (params as Record<string, unknown>).timeout === "number"
+        ? Math.min(Math.max(5, (params as Record<string, unknown>).timeout as number), 300)
+        : 60;
+    // Delegate to the bash tool's run() — it handles sandbox routing, output
+    // bounding, and timeout. We just wrap the script in python3 -c.
+    const res = await run(["python3", "-c", code], { timeoutS });
+    const bounded = boundOutput(res.output, res.timedOut, timeoutS);
+    return {
+      content: [{ type: "text", text: bounded.text }],
+      details: {
+        exitCode: res.code,
+        timedOut: res.timedOut,
+        ...(bounded.savedTo ? { savedTo: bounded.savedTo } : {}),
+      },
+    };
+  },
+};
 export const STRIX_TOOLS: ToolDef[] = [
   think,
   loadSkill,
@@ -2094,6 +2136,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   fetchUrl,
   thought,
   terminal,
+  python,
 
   finishScan,
 ];

@@ -84,7 +84,7 @@ function text(s: string): { content: { type: string; text: string }[] } {
   return { content: [{ type: "text", text: s }] };
 }
 
-function run(
+export function run(
   argv: string[],
   opts: { cwd?: string; timeoutS: number; signal?: AbortSignal },
 ): Promise<{ code: number; output: string; timedOut: boolean }> {
@@ -170,7 +170,11 @@ function hexPreview(raw: string, maxBytes = 256): string {
   return lines.join("\n");
 }
 
-function boundOutput(raw: string, timedOut: boolean, timeoutS: number): { text: string; savedTo?: string } {
+export function boundOutput(
+  raw: string,
+  timedOut: boolean,
+  timeoutS: number,
+): { text: string; savedTo?: string } {
   const suffix = timedOut ? `\n\n[command timed out after ${timeoutS}s — partial output shown]` : "";
 
   // Binary content → hex preview, never raw bytes into context.
