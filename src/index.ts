@@ -367,6 +367,7 @@ export default function (pi: ExtensionAPI) {
       }
       pi.setSessionName("strix");
       ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
+      applyStrixStatusLine(pi);
       // Scan-wide token total (main session + subagent transcripts) beside
       // the builtin cost segment. Refreshed on an interval; cleared on
       // session_shutdown by the runner's managed timers.
