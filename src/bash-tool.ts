@@ -606,7 +606,14 @@ export function strixBash(pi: ExtensionAPI) {
       if (scan?.target) {
         const targetHosts = scan.target
           .split(/[\s,]+/)
-          .map((t) => t.trim().toLowerCase())
+          .map((t) =>
+            t
+              .trim()
+              .toLowerCase()
+              .replace(/^https?:\/\//, "")
+              .replace(/\/.*$/, "")
+              .replace(/:\d+$/, ""),
+          )
           .filter(Boolean);
         const cmdHosts =
           command.match(

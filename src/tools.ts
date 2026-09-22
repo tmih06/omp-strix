@@ -1778,7 +1778,14 @@ Each task: { id, content, status: pending|in_progress|completed|blocked }. Ids a
     const targetHosts = scan?.target
       ? scan.target
           .split(/[\s,]+/)
-          .map((t) => t.trim().toLowerCase())
+          .map((t) =>
+            t
+              .trim()
+              .toLowerCase()
+              .replace(/^https?:\/\//, "")
+              .replace(/\/.*$/, "")
+              .replace(/:\d+$/, ""),
+          )
           .filter(Boolean)
       : [];
     const errors: string[] = [];
@@ -2799,6 +2806,12 @@ Required witness fields per class (see WITNESS_SCHEMAS): INJECTION needs slot_ty
     const dir = scanDir();
     if (!dir) return noScan();
     const cls = str(params, "class").toUpperCase();
+    if (!["INJECTION", "XSS", "AUTH", "AUTHZ", "SSRF", "MISC"].includes(cls)) {
+      return json({
+        success: false,
+        error: `Invalid class '${cls}'. Must be one of: INJECTION, XSS, AUTH, AUTHZ, SSRF, MISC`,
+      });
+    }
     const witness = (params as Record<string, unknown>).witness as Record<string, unknown> | undefined;
     if (!witness || typeof witness !== "object") {
       return json({ success: false, error: "witness object is required" });
