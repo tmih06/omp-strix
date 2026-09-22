@@ -28,7 +28,7 @@ import {
   rewritePathInput,
   stopSandbox,
 } from "./sandbox";
-import { activeScan, beginScan, endScan } from "./state";
+import { activeScan, beginScan, collectSubagentMetrics, endScan } from "./state";
 import { STRIX_TOOLS } from "./tools";
 
 const TOOL_NAMES = STRIX_TOOLS.map((t) => t.name);
@@ -366,9 +366,29 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Theme 'strix-red' not loaded: ${themeResult.error}`, "warning");
       }
       pi.setSessionName("strix");
-      ctx.ui.setWorkingMessage("Scanning…");
       ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
-      applyStrixStatusLine(pi);
+      // Scan-wide token total (main session + subagent transcripts) beside
+      // the builtin cost segment. Refreshed on an interval; cleared on
+      // session_shutdown by the runner's managed timers.
+      const updateTokens = () => {
+        if (!strix.active) return;
+        const sm = ctx.sessionManager as
+          | {
+              getUsageStatistics?: () => { totalTokens?: number };
+              getSessionFile?: () => string | undefined;
+            }
+          | undefined;
+        const main = sm?.getUsageStatistics?.()?.totalTokens ?? 0;
+        const sub = collectSubagentMetrics(sm?.getSessionFile?.()).subagentUsage.totalTokens;
+        const total = main + sub;
+        if (total > 0) {
+          const fmt = (n: number) =>
+            n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}K`;
+          ctx.ui.setStatus?.("strix_mode", `◆ STRIX · Σ ${fmt(total)}`);
+        }
+      };
+      ctx.setInterval?.(updateTokens, 15_000);
+      updateTokens();
       const target = args.trim();
       ctx.ui.notify(
         target
