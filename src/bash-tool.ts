@@ -9,12 +9,12 @@
  * no docker client).
  */
 
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { activeSandbox, WORKSPACE } from "./sandbox";
-import { scanDir } from "./state";
+import { activeScan, scanDir } from "./state";
 
 type Json = Record<string, unknown>;
 type ThemeLike = {
@@ -80,6 +80,10 @@ const wrapVis = (s: string, w: number): string[] => {
 };
 const DEFAULT_TIMEOUT_S = 300;
 
+/** Recent command hashes for the loop guard — module-level so it persists
+ *  across bash calls within the same session. */
+const recentCommands = new Set<string>();
+
 function text(s: string): { content: { type: string; text: string }[] } {
   return { content: [{ type: "text", text: s }] };
 }
@@ -122,6 +126,45 @@ export function run(
       resolve({ code: code ?? 1, output: out, timedOut });
     });
   });
+}
+
+/** Route a command into the sandbox container when active, else run on host.
+ *  Used by terminal/python so they share the same isolation as bash. */
+export async function runSandboxed(
+  argv: string[],
+  opts: { cwd?: string; timeoutS: number; signal?: AbortSignal },
+): Promise<{ code: number; output: string; timedOut: boolean }> {
+  const sb = activeSandbox();
+  if (!sb) return run(argv, opts);
+  // Wrap the argv as a single shell command inside the container.
+  const inner = `umask 000; cd ${JSON.stringify(containerCwd(opts.cwd, sb.workspaceRoot))} && ${argv.map((a) => JSON.stringify(a)).join(" ")}`;
+  return run(["docker", "exec", "omp-strix-sandbox", "bash", "-lc", inner], {
+    timeoutS: opts.timeoutS,
+    signal: opts.signal,
+  });
+}
+
+/** Spawn a persistent shell inside the sandbox when active, else on host.
+ *  Returns the ChildProcess and a flag indicating sandbox routing. */
+export function spawnSandboxed(
+  command: string,
+  opts: { cwd?: string },
+): { proc: ChildProcess; sandboxed: boolean } {
+  const sb = activeSandbox();
+  if (!sb) {
+    const proc = spawn("bash", ["-c", command], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, TERM: "dumb" },
+      cwd: opts.cwd,
+    });
+    return { proc, sandboxed: false };
+  }
+  const inner = `umask 000; cd ${JSON.stringify(containerCwd(opts.cwd, sb.workspaceRoot))} && ${command}`;
+  const proc = spawn("docker", ["exec", "-i", "omp-strix-sandbox", "bash", "-lc", inner], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, TERM: "dumb" },
+  });
+  return { proc, sandboxed: true };
 }
 
 /** Map a host-side cwd into the container's /workspace mount. */
@@ -298,6 +341,60 @@ function missingToolHint(output: string): string | null {
     return `\n\n[tool missing: ${name} — ${hint}]`;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Error classification + recovery trailer (hexstrike pattern)
+// ---------------------------------------------------------------------------
+
+const ERROR_PATTERNS: { pattern: RegExp; errorType: string; recovery: string }[] = [
+  {
+    pattern: /command not found|No such file or directory/i,
+    errorType: "TOOL_NOT_FOUND",
+    recovery: "Install the tool or use an alternative",
+  },
+  {
+    pattern: /permission denied|EACCES/i,
+    errorType: "PERMISSION_DENIED",
+    recovery: "Check file permissions or run as different user",
+  },
+  {
+    pattern: /connection refused|ECONNREFUSED|network unreachable|timeout/i,
+    errorType: "NETWORK_UNREACHABLE",
+    recovery: "Check target is up, try different port/protocol",
+  },
+  {
+    pattern: /rate limit|429|too many requests/i,
+    errorType: "RATE_LIMITED",
+    recovery: "Slow down, add delays, or use different technique",
+  },
+  {
+    pattern: /invalid|usage:|error:|failed/i,
+    errorType: "INVALID_PARAMETERS",
+    recovery: "Check command syntax and parameters",
+  },
+  {
+    pattern: /authentication|unauthorized|401|403/i,
+    errorType: "AUTHENTICATION_FAILED",
+    recovery: "Check credentials or try unauthenticated path",
+  },
+  {
+    pattern: /parse|json|xml|syntax/i,
+    errorType: "PARSING_ERROR",
+    recovery: "Check output format or use different parser",
+  },
+];
+
+/** Classify a failed command's output and append a recovery hint. */
+export function classifyToolError(output: string, exitCode: number, timedOut: boolean): string {
+  if (timedOut) return "\n\n[error: TIMEOUT — increase timeout or use a faster technique]";
+  for (const { pattern, errorType, recovery } of ERROR_PATTERNS) {
+    if (pattern.test(output)) {
+      return `\n\n[error: ${errorType} — ${recovery}]`;
+    }
+  }
+  if (exitCode !== 0) return `\n\n[error: exit ${exitCode}]`;
+  return "";
 }
 
 export function strixBash(pi: ExtensionAPI) {
@@ -490,6 +587,42 @@ export function strixBash(pi: ExtensionAPI) {
     ): Promise<{ content: { type: string; text: string }[]; details?: Json }> {
       const command = typeof params.command === "string" ? params.command : "";
       if (!command.trim()) return text("bash: empty command");
+      // Loop guard: reject exact duplicate commands within a session.
+      const cmdHash = command.trim().replace(/\s+/g, " ");
+      if (recentCommands.has(cmdHash)) {
+        return text(
+          `bash: duplicate command rejected — you already ran this exact command. Change approach or parameters.`,
+        );
+      }
+      recentCommands.add(cmdHash);
+      if (recentCommands.size > 200) {
+        const first = recentCommands.values().next().value;
+        if (first) recentCommands.delete(first);
+      }
+
+      // Scope enforcement: extract IPs/domains from the command and check
+      // against the active scan target. Blocks out-of-scope testing.
+      const scan = activeScan();
+      if (scan?.target) {
+        const targetHosts = scan.target
+          .split(/[\s,]+/)
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
+        const cmdHosts =
+          command.match(
+            /\b(?:https?:\/\/)?([a-z0-9.-]+\.[a-z]{2,}|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/gi,
+          ) ?? [];
+        const outOfScope = cmdHosts.filter((h) => {
+          const host = h.replace(/^https?:\/\//, "").toLowerCase();
+          return !targetHosts.some((t) => host === t || host.endsWith(`.${t}`) || t.endsWith(`.${host}`));
+        });
+        if (outOfScope.length > 0) {
+          return text(
+            `bash: out-of-scope target(s) detected: ${outOfScope.join(", ")}. Scan target is: ${scan.target}`,
+          );
+        }
+      }
+
       const timeoutS =
         typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : DEFAULT_TIMEOUT_S;
       const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
@@ -508,7 +641,10 @@ export function strixBash(pi: ExtensionAPI) {
           signal,
         });
         const bounded = boundOutput(res.output, res.timedOut, timeoutS);
-        const hint = res.code !== 0 ? (missingToolHint(res.output) ?? "") : "";
+        const hint =
+          res.code !== 0
+            ? (missingToolHint(res.output) ?? classifyToolError(res.output, res.code, res.timedOut))
+            : "";
         return {
           content: [{ type: "text", text: bounded.text + hint }],
           details: {
@@ -524,7 +660,10 @@ export function strixBash(pi: ExtensionAPI) {
       // Host path: no sandbox, or the agent deliberately issued a docker command.
       const res = await run(["bash", "-c", command], { cwd, timeoutS, signal });
       const bounded = boundOutput(res.output, res.timedOut, timeoutS);
-      const hint = res.code !== 0 ? (missingToolHint(res.output) ?? "") : "";
+      const hint =
+        res.code !== 0
+          ? (missingToolHint(res.output) ?? classifyToolError(res.output, res.code, res.timedOut))
+          : "";
       return {
         content: [{ type: "text", text: bounded.text + hint }],
         details: {

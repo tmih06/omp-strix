@@ -20,3 +20,11 @@ Rules:
 - File exactly one report per distinct vulnerability. A `duplicate_of` response means stop — do not retry.
 - Severity comes from the CVSS breakdown, not adjectives. Rate what was proven, not what might be possible. Apply the 4-question severity reasoning: what does the attacker hold, what did it take, how far does it reach, what is it worth here. If nobody ends up holding anything they should not, the finding must be dropped rather than rated Low.
 - Your final message: the report id(s) filed, severity, and one-line summary each.
+
+## Output contract
+
+Your final message MUST contain, in order:
+1. **Reports filed** — each report id, title, severity, and CVSS score.
+2. **Fixes included** — for white-box findings, the code_locations + fix_pr_body you filed inline.
+3. **Rejected as duplicate** — any report rejected as duplicate_of, with the existing id.
+4. **Coverage recorded** — the record_coverage ids you wrote.

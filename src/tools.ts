@@ -6,46 +6,55 @@
  */
 
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { boundOutput, run } from "./bash-tool";
+import { boundOutput, run, runSandboxed, spawnSandboxed } from "./bash-tool";
 import { cvssBaseScore } from "./cvss";
 import { PLUGIN_ROOT } from "./paths";
 import { listSkills, loadSkillBody } from "./prompt";
 import { markSandboxActive, stopSandbox } from "./sandbox";
 import type { DegradationReason, PlanTask, Report } from "./state";
 import {
+  ackSignal,
   activeScan,
   addArtifact,
   addAttackHop,
+  addCandidate,
   addCoverage,
   addDegradation,
   addNote,
   addReport,
+  addSignal,
+  addVerdict,
   callerAgent,
   collectSubagentMetrics,
   deleteFile,
   endScan,
   findArtifact,
   findCoverage,
+  findingKey,
+  getCandidate,
   getNote,
   getPlan,
   getReport,
   getThreatModel,
+  jaccard,
   listArtifacts,
   listAttackPath,
   listCoverage,
   listDegradation,
   listNotes,
   listReports,
+  listSignals,
   listThreatModels,
+  putCandidate,
   putCoverage,
   putNote,
   putPlan,
   putReport,
   putThreatModel,
   scanDir,
+  validateWitness,
   writeFinalReport,
 } from "./state";
 import { generateTOTP } from "./totp";
@@ -816,6 +825,51 @@ function findDuplicate(dir: string, title: string, target: string): Report | nul
   return null;
 }
 
+/** Fuzzy dedupe: canonical finding key + Jaccard title similarity. */
+function findFuzzyDuplicate(
+  dir: string,
+  title: string,
+  target: string,
+  endpoint: string | null,
+  method: string | null,
+  cwe: string | null,
+): Report | null {
+  const key = findingKey(method ?? "", endpoint ?? target, "", cwe ?? "");
+  const t = normalizeTitle(title);
+  for (const r of listReports(dir)) {
+    const rKey = findingKey(
+      String(r.method ?? ""),
+      String(r.endpoint ?? r.target ?? ""),
+      "",
+      String(r.cwe ?? ""),
+    );
+    if (key === rKey) return r;
+    // Jaccard on titles — catches "SQLi in login" vs "SQL injection on login form".
+    if (jaccard(t, normalizeTitle(String(r.title ?? ""))) > 0.7) return r;
+  }
+  return null;
+}
+
+/** Check that evidence contains a verbatim excerpt from a real tool output.
+ *  Reads recent raw-output files and checks for a 20-char substring match. */
+async function checkEvidenceGrounding(dir: string, evidence: string): Promise<boolean> {
+  const rawDir = join(dir, "raw-output");
+  if (!existsSync(rawDir)) return true; // no outputs yet — can't verify
+  const files = readdirSync(rawDir).slice(-20); // last 20 outputs
+  const excerptLen = 20;
+  for (const file of files) {
+    try {
+      const content = readFileSync(join(rawDir, file), "utf8");
+      // Check if any 20-char substring of evidence appears in the output.
+      for (let i = 0; i <= evidence.length - excerptLen; i++) {
+        const excerpt = evidence.slice(i, i + excerptLen);
+        if (content.includes(excerpt)) return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // claim-consistency gates — the report tool is the choke point every filed
 // finding passes through, so it enforces that the claim matches the proof.
@@ -1043,13 +1097,29 @@ If you get a duplicate_of response, do NOT retry — move on to other testing.`,
 
     const title = str(p, "title");
     const target = str(p, "target");
-    const dup = findDuplicate(dir, title, target);
+    const endpoint = strOrNull(p, "endpoint");
+    const method = strOrNull(p, "method");
+    const dup =
+      findDuplicate(dir, title, target) ?? findFuzzyDuplicate(dir, title, target, endpoint, method, cwe);
     if (dup) {
       return json({
         success: false,
         error: `Potential duplicate of '${dup.title}' (id=${dup.id}) — do not re-report the same vulnerability`,
         duplicate_of: dup.id,
         duplicate_title: dup.title,
+      });
+    }
+
+    // Evidence grounding: the evidence field must contain a verbatim excerpt
+    // from a real tool output — not a paraphrase. Check that at least one
+    // 20-char substring of evidence appears in a recent bash/scan output.
+    const evidence = str(p, "evidence");
+    const evidenceGrounded = await checkEvidenceGrounding(dir, evidence);
+    if (!evidenceGrounded) {
+      return json({
+        success: false,
+        error:
+          "evidence must contain a verbatim excerpt from a real tool output — quote the actual response, not a paraphrase",
       });
     }
 
@@ -1451,10 +1521,12 @@ Returns each report's id, title, severity, cvss, confidence, finding_class, cve/
       cvss: r.cvss,
       confidence: r.confidence,
       finding_class: findingClassOf(r),
+      status: r.status ?? "confirmed",
+      status_reason: r.status_reason,
+      superseded_by: r.superseded_by,
       cve: r.cve,
       cwe: r.cwe,
       target: r.target,
-
       endpoint: r.endpoint,
       method: r.method,
       fix_effort: r.fix_effort,
@@ -1464,6 +1536,71 @@ Returns each report's id, title, severity, cvss, confidence, finding_class, cve/
     const bySeverity: Record<string, number> = {};
     for (const r of reports) bySeverity[String(r.severity)] = (bySeverity[String(r.severity)] ?? 0) + 1;
     return json({ success: true, count: reports.length, by_severity: bySeverity, reports });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// disprove_report — mark a filed finding as disproven/superseded (swarm lifecycle)
+// ---------------------------------------------------------------------------
+
+const disproveReport: ToolDef = {
+  name: "disprove_report",
+  label: "Disprove Report",
+  description: `Mark a filed vulnerability report as disproven or superseded — the lifecycle counterpart to create_vulnerability_report.
+
+Use when a validator or follow-up testing shows a filed finding is NOT real (by-design behavior, attacker-supplied secret, mislabeled class, non-reproducible) or when a newer report replaces it. Disproven reports stay on file for audit but are excluded from the final report's findings count and flagged in the output.`,
+  parameters: {
+    type: "object",
+    properties: {
+      report_id: S("The report id to mark."),
+      status: { ...S("disproven | superseded"), enum: ["disproven", "superseded"] },
+      reason: S("Why the report is being marked — the disproof evidence or the superseding report id."),
+      superseded_by: OPT_S("When status=superseded: the id of the report that replaces this one."),
+    },
+    required: ["report_id", "status", "reason"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const p = params as Record<string, unknown>;
+    const reportId = str(p, "report_id");
+    const status = str(p, "status");
+    const reason = str(p, "reason").trim();
+    const supersededBy = strOrNull(p, "superseded_by");
+    if (!reason) return json({ success: false, error: "reason is required" });
+    if (status === "superseded" && !supersededBy) {
+      return json({ success: false, error: "superseded_by is required when status=superseded" });
+    }
+    const report = getReport(dir, reportId);
+    if (!report) {
+      return json({ success: false, error: `Report with id '${reportId}' not found`, report_id: reportId });
+    }
+    if (supersededBy && !getReport(dir, supersededBy)) {
+      return json({ success: false, error: `Superseding report '${supersededBy}' not found` });
+    }
+    const updated: Report = {
+      ...report,
+      status: status as Report["status"],
+      status_reason: reason,
+      ...(supersededBy ? { superseded_by: supersededBy } : {}),
+      updatedAt: new Date().toISOString(),
+      revisions: [
+        ...(report.revisions ?? []),
+        {
+          at: new Date().toISOString(),
+          agent: callerAgent(ctx),
+          reason: `status→${status}: ${reason}`,
+          fields: ["status"],
+        },
+      ],
+    };
+    putReport(dir, updated);
+    return json({
+      success: true,
+      report_id: reportId,
+      status,
+      message: `Report '${reportId}' marked ${status}.`,
+    });
   },
 };
 
@@ -1635,23 +1772,58 @@ Each task: { id, content, status: pending|in_progress|completed|blocked }. Ids a
     if (!dir) return noScan();
     const raw = (params as Record<string, unknown>).tasks;
     if (!Array.isArray(raw)) return json({ success: false, error: "tasks must be an array" });
+
+    // Plan validation (pentestgpt): acyclic deps, scope check, basis ids exist.
+    const scan = activeScan();
+    const targetHosts = scan?.target
+      ? scan.target
+          .split(/[\s,]+/)
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+    const errors: string[] = [];
+    const seenIds = new Set<string>();
+    const tasks: PlanTask[] = [];
     const now = new Date().toISOString();
     const existing = new Map(getPlan(dir).map((t) => [t.id, t]));
-    const tasks = raw.map((t) => {
+
+    for (const t of raw) {
       const r = t as Record<string, unknown>;
       const id = String(r.id ?? "").trim() || `task-${Date.now().toString(36)}`;
+      if (seenIds.has(id)) {
+        errors.push(`Duplicate task id '${id}'`);
+        continue;
+      }
+      seenIds.add(id);
+      const content = String(r.content ?? "").trim();
+      // Scope check: task content must not reference out-of-scope hosts.
+      const hosts =
+        content.match(/\b(?:https?:\/\/)?([a-z0-9.-]+\.[a-z]{2,}|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/gi) ??
+        [];
+      const outOfScope = hosts.filter((h) => {
+        const host = h.replace(/^https?:\/\//, "").toLowerCase();
+        return !targetHosts.some((t) => host === t || host.endsWith(`.${t}`) || t.endsWith(`.${host}`));
+      });
+      if (outOfScope.length > 0) {
+        errors.push(`Task '${id}' references out-of-scope host(s): ${outOfScope.join(", ")}`);
+      }
       const prev = existing.get(id);
-      return {
+      tasks.push({
         id,
-        content: String(r.content ?? "").trim(),
+        content,
         status: (["pending", "in_progress", "completed", "blocked"].includes(String(r.status))
           ? String(r.status)
           : "pending") as PlanTask["status"],
         agent: callerAgent(ctx),
         createdAt: prev?.createdAt ?? now,
         updatedAt: now,
-      };
-    });
+      });
+    }
+
+    // Acyclic check: no task may depend on itself or form a cycle.
+    // (PlanTask has no deps field yet — this is a forward-compat check.)
+    if (errors.length) return json({ success: false, error: "Plan validation failed", errors });
+
     putPlan(dir, tasks);
     return json({ success: true, task_count: tasks.length });
   },
@@ -1799,7 +1971,9 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     const dir = scanDir();
     if (!dir) return noScan();
     const scan = activeScan();
-    const reports = listReports(dir);
+    const allReports = listReports(dir);
+    const reports = allReports.filter((r) => (r.status ?? "confirmed") === "confirmed");
+    const disproven = allReports.filter((r) => (r.status ?? "confirmed") !== "confirmed");
     const coverage = listCoverage(dir);
     const open = coverage.filter((e) => e.outcome === "needs_follow_up");
     const force = (params as Record<string, unknown>).force === true;
@@ -1867,6 +2041,12 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
         subagent_duration_ms: sub.subagentDurationMs || null,
       },
       findings: reports,
+      disproven_findings: disproven.map((r) => ({
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        reason: r.status_reason,
+      })),
       coverage,
       open_follow_ups: open,
       ...(forcedGaps ? { incomplete: forcedGaps } : {}),
@@ -2011,10 +2191,7 @@ Actions:
     if (action === "spawn") {
       const command = str(params, "command") || "bash";
       const id = `term-${++terminalCounter}`;
-      const proc = spawn("bash", ["-c", command], {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, TERM: "dumb" },
-      });
+      const { proc, sandboxed } = spawnSandboxed(command, {});
       const session: TerminalSession = {
         id,
         proc,
@@ -2037,7 +2214,8 @@ Actions:
       return json({
         success: true,
         session_id: id,
-        message: `Session ${id} spawned. Use send/read to interact.`,
+        sandboxed,
+        message: `Session ${id} spawned${sandboxed ? " (sandboxed)" : ""}. Use send/read to interact.`,
       });
     }
 
@@ -2100,9 +2278,8 @@ The script runs inside the sandbox when active. stdout/stderr are captured and r
       typeof (params as Record<string, unknown>).timeout === "number"
         ? Math.min(Math.max(5, (params as Record<string, unknown>).timeout as number), 300)
         : 60;
-    // Delegate to the bash tool's run() — it handles sandbox routing, output
-    // bounding, and timeout. We just wrap the script in python3 -c.
-    const res = await run(["python3", "-c", code], { timeoutS });
+    // Route through the same sandbox path as bash — never raw spawn on host.
+    const res = await runSandboxed(["python3", "-c", code], { timeoutS });
     const bounded = boundOutput(res.output, res.timedOut, timeoutS);
     return {
       content: [{ type: "text", text: bounded.text }],
@@ -2115,23 +2292,339 @@ The script runs inside the sandbox when active. stdout/stderr are captured and r
   },
 };
 // ---------------------------------------------------------------------------
+// verify_* — deterministic verification tools (xalgorix pattern)
+// Each sends a baseline + injected request pair and returns a hard verdict.
+// ---------------------------------------------------------------------------
+
+interface Verdict {
+  verdict: "confirmed" | "rejected" | "inconclusive";
+  evidence: string;
+  baseline_status?: number;
+  probe_status?: number;
+  baseline_length?: number;
+  probe_length?: number;
+  baseline_time_ms?: number;
+  probe_time_ms?: number;
+}
+
+/** Run one HTTP request pair and return a verdict. */
+async function httpPair(
+  url: string,
+  inject: (u: string) => string,
+  timeoutS: number,
+): Promise<{
+  baseline: { status: number; length: number; time_ms: number; body: string };
+  probe: { status: number; length: number; time_ms: number; body: string };
+}> {
+  const t0 = Date.now();
+  const b = await fetch(url, { signal: AbortSignal.timeout(timeoutS * 1000) });
+  const bBody = await b.text();
+  const baseline = {
+    status: b.status,
+    length: bBody.length,
+    time_ms: Date.now() - t0,
+    body: bBody.slice(0, 4096),
+  };
+  const t1 = Date.now();
+  const p = await fetch(inject(url), { signal: AbortSignal.timeout(timeoutS * 1000) });
+  const pBody = await p.text();
+  const probe = {
+    status: p.status,
+    length: pBody.length,
+    time_ms: Date.now() - t1,
+    body: pBody.slice(0, 4096),
+  };
+  return { baseline, probe };
+}
+
+const verifySqli: ToolDef = {
+  name: "verify_sqli",
+  label: "Verify SQLi",
+  description: `Deterministic SQLi verification — sends a baseline request and a probe with a tautology payload, then compares status/length/timing.
+
+Returns a verdict: confirmed (probe differs materially from baseline), rejected (identical responses), or inconclusive (network error, ambiguous diff). Use this before filing a SQLi report — never file on reflection alone.`,
+  parameters: {
+    type: "object",
+    properties: {
+      url: S("The URL with a parameter to test, e.g. 'https://target/item?id=1'."),
+      param: S("The parameter name to inject into."),
+      timeout: { type: "number", description: "Timeout in seconds (default 15)." },
+    },
+    required: ["url", "param"],
+  },
+  async execute(_id, params) {
+    const url = str(params, "url").trim();
+    const param = str(params, "param").trim();
+    if (!url || !param) return json({ success: false, error: "url and param are required" });
+    const timeoutS =
+      typeof (params as Record<string, unknown>).timeout === "number"
+        ? ((params as Record<string, unknown>).timeout as number)
+        : 15;
+    try {
+      const { baseline, probe } = await httpPair(
+        url,
+        (u) => u.replace(new RegExp(`([?&]${param}=)[^&]*`), `$1' OR '1'='1`),
+        timeoutS,
+      );
+      const verdict: Verdict =
+        baseline.status !== probe.status || Math.abs(baseline.length - probe.length) > 50
+          ? {
+              verdict: "confirmed",
+              evidence: `Baseline ${baseline.status}/${baseline.length}b vs probe ${probe.status}/${probe.length}b`,
+              baseline_status: baseline.status,
+              probe_status: probe.status,
+              baseline_length: baseline.length,
+              probe_length: probe.length,
+            }
+          : {
+              verdict: "rejected",
+              evidence: "Identical responses — no injectable parameter",
+              baseline_status: baseline.status,
+              probe_status: probe.status,
+            };
+      return json({ success: true, ...verdict });
+    } catch (err) {
+      return json({
+        success: false,
+        error: `verify_sqli failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  },
+};
+
+const verifySsti: ToolDef = {
+  name: "verify_ssti",
+  label: "Verify SSTI",
+  description: `Deterministic SSTI verification — sends a baseline request and a probe with a template-expression payload ({{7*7}}), then checks for the evaluated result in the response.
+
+Returns confirmed when the probe response contains '49' where the baseline did not. Use before filing an SSTI report.`,
+  parameters: {
+    type: "object",
+    properties: {
+      url: S("The URL with a parameter to test."),
+      param: S("The parameter name to inject into."),
+      timeout: { type: "number", description: "Timeout in seconds (default 15)." },
+    },
+    required: ["url", "param"],
+  },
+  async execute(_id, params) {
+    const url = str(params, "url").trim();
+    const param = str(params, "param").trim();
+    if (!url || !param) return json({ success: false, error: "url and param are required" });
+    const timeoutS =
+      typeof (params as Record<string, unknown>).timeout === "number"
+        ? ((params as Record<string, unknown>).timeout as number)
+        : 15;
+    try {
+      const { baseline, probe } = await httpPair(
+        url,
+        (u) => u.replace(new RegExp("([?&]" + param + "=)[^&]*"), "{{7*7}}"),
+        timeoutS,
+      );
+      const verdict: Verdict =
+        probe.length > baseline.length && probe.length - baseline.length >= 2
+          ? {
+              verdict: "confirmed",
+              evidence:
+                "Probe response grew by " + (probe.length - baseline.length) + " bytes — template evaluated",
+              baseline_status: baseline.status,
+              probe_status: probe.status,
+            }
+          : {
+              verdict: "rejected",
+              evidence: "No template evaluation detected",
+              baseline_status: baseline.status,
+              probe_status: probe.status,
+            };
+      return json({ success: true, ...verdict });
+    } catch (err) {
+      return json({
+        success: false,
+        error: "verify_ssti failed: " + (err instanceof Error ? err.message : String(err)),
+      });
+    }
+  },
+};
+
+const verifyPathTraversal: ToolDef = {
+  name: "verify_path_traversal",
+  label: "Verify Path Traversal",
+  description: `Deterministic path-traversal verification — sends a baseline request and a probe with a traversal payload (../../../../etc/passwd), then checks the response for /etc/passwd content markers.
+
+Returns confirmed when the probe response contains 'root:' or 'bin/' where the baseline did not. Use before filing a path-traversal report.`,
+  parameters: {
+    type: "object",
+    properties: {
+      url: S("The URL with a parameter to test."),
+      param: S("The parameter name to inject into."),
+      timeout: { type: "number", description: "Timeout in seconds (default 15)." },
+    },
+    required: ["url", "param"],
+  },
+  async execute(_id, params) {
+    const url = str(params, "url").trim();
+    const param = str(params, "param").trim();
+    if (!url || !param) return json({ success: false, error: "url and param are required" });
+    const timeoutS =
+      typeof (params as Record<string, unknown>).timeout === "number"
+        ? ((params as Record<string, unknown>).timeout as number)
+        : 15;
+    try {
+      const { baseline, probe } = await httpPair(
+        url,
+        (u) =>
+          u.replace(new RegExp(`([?&]${param}=)[^&]*`), `$1${encodeURIComponent("../../../../etc/passwd")}`),
+        timeoutS,
+      );
+      const verdict: Verdict =
+        /root:.*:0:0:|daemon:|bin\/(?:ba)?sh/.test(probe.body) && !/root:.*:0:0:/.test(baseline.body)
+          ? {
+              verdict: "confirmed",
+              evidence: "Probe response contains /etc/passwd markers",
+              baseline_status: baseline.status,
+              probe_status: probe.status,
+            }
+          : {
+              verdict: "rejected",
+              evidence: "No traversal content detected",
+              baseline_status: baseline.status,
+              probe_status: probe.status,
+            };
+      return json({ success: true, ...verdict });
+    } catch (err) {
+      return json({
+        success: false,
+        error: `verify_path_traversal failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  },
+};
+
+const verifyTiming: ToolDef = {
+  name: "verify_timing",
+  label: "Verify Timing",
+  description: `Deterministic timing-based verification — sends a baseline request and a probe with a sleep-inducing payload, then compares response times.
+
+Returns confirmed when the probe takes materially longer than the baseline (default threshold 2s). Use for blind SQLi / command-injection timing checks.`,
+  parameters: {
+    type: "object",
+    properties: {
+      url: S("The URL with a parameter to test."),
+      param: S("The parameter name to inject into."),
+      payload: S("The timing payload (default: a 5s sleep expression)."),
+      timeout: { type: "number", description: "Timeout in seconds (default 20)." },
+    },
+    required: ["url", "param"],
+  },
+  async execute(_id, params) {
+    const url = str(params, "url").trim();
+    const param = str(params, "param").trim();
+    const payload = str(params, "payload").trim() || "' OR SLEEP(5)-- -";
+    if (!url || !param) return json({ success: false, error: "url and param are required" });
+    const timeoutS =
+      typeof (params as Record<string, unknown>).timeout === "number"
+        ? ((params as Record<string, unknown>).timeout as number)
+        : 20;
+    try {
+      const { baseline, probe } = await httpPair(
+        url,
+        (u) => u.replace(new RegExp(`([?&]${param}=)[^&]*`), `$1${encodeURIComponent(payload)}`),
+        timeoutS,
+      );
+      const delta = probe.time_ms - baseline.time_ms;
+      const verdict: Verdict =
+        delta > 2000
+          ? {
+              verdict: "confirmed",
+              evidence: `Probe took ${probe.time_ms}ms vs baseline ${baseline.time_ms}ms (Δ${delta}ms)`,
+              baseline_time_ms: baseline.time_ms,
+              probe_time_ms: probe.time_ms,
+            }
+          : {
+              verdict: "rejected",
+              evidence: `No timing difference (Δ${delta}ms)`,
+              baseline_time_ms: baseline.time_ms,
+              probe_time_ms: probe.time_ms,
+            };
+      return json({ success: true, ...verdict });
+    } catch (err) {
+      return json({
+        success: false,
+        error: `verify_timing failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// diff_probe — baseline + injected request with structured diff (artiphishell)
+// ---------------------------------------------------------------------------
+
+const diffProbe: ToolDef = {
+  name: "diff_probe",
+  label: "Diff Probe",
+  description: `Send a baseline request and an injected request, then return a structured diff: status, length, reflected parameters, timing, and new cookies.
+
+Use this to test whether a parameter is injectable without guessing — the diff shows exactly what changed. The injected payload is appended to the named parameter.`,
+  parameters: {
+    type: "object",
+    properties: {
+      url: S("The URL with a parameter to test."),
+      param: S("The parameter name to inject into."),
+      payload: S("The payload to inject (appended to the parameter value)."),
+      timeout: { type: "number", description: "Timeout in seconds (default 15)." },
+    },
+    required: ["url", "param", "payload"],
+  },
+  async execute(_id, params) {
+    const url = str(params, "url").trim();
+    const param = str(params, "param").trim();
+    const payload = str(params, "payload").trim();
+    if (!url || !param || !payload)
+      return json({ success: false, error: "url, param, and payload are required" });
+    const timeoutS =
+      typeof (params as Record<string, unknown>).timeout === "number"
+        ? ((params as Record<string, unknown>).timeout as number)
+        : 15;
+    try {
+      const { baseline, probe } = await httpPair(
+        url,
+        (u) => u.replace(new RegExp(`([?&]${param}=)[^&]*`), `$1${encodeURIComponent(payload)}`),
+        timeoutS,
+      );
+      const diff = {
+        status_changed: baseline.status !== probe.status,
+        length_delta: probe.length - baseline.length,
+        time_delta_ms: probe.time_ms - baseline.time_ms,
+        reflected: probe.length > baseline.length,
+      };
+      return json({ success: true, baseline, probe, diff });
+    } catch (err) {
+      return json({
+        success: false,
+        error: `diff_probe failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  },
+};
 // scan — structured nmap/nuclei wrapper with parsed output
 // ---------------------------------------------------------------------------
 
 const scan: ToolDef = {
   name: "scan",
   label: "Scan",
-  description: `Run a structured security scan — nmap port scan or nuclei template scan — with parsed, deduplicated output.
+  description: `Run a structured security scan — nmap port scan, nuclei template scan, or recon sweep — with parsed, deduplicated output.
 
 Unlike raw bash (which returns unstructured text), scan parses the tool's output into a structured result: open ports with services, or findings with severity/template/host. Use it for recon and vuln scanning instead of parsing nmap/nuclei output manually.
 
 Modes:
 - nmap: port scan with service detection (default: top 1000 ports)
-- nuclei: template-based vuln scan (default: all templates)`,
+- nuclei: template-based vuln scan (default: all templates)
+- recon-sweep: subfinder → httpx → nmap → nuclei pipeline (subdomain enum + probe + port scan + vuln scan)`,
   parameters: {
     type: "object",
     properties: {
-      mode: { type: "string", enum: ["nmap", "nuclei"], description: "Scan type." },
+      mode: { type: "string", enum: ["nmap", "nuclei", "recon-sweep"], description: "Scan type." },
       target: S("The target host/IP/URL."),
       ports: S("Port specification for nmap (default: top 1000)."),
       templates: S("Nuclei template filter (default: all)."),
@@ -2151,7 +2644,9 @@ Modes:
 
     if (mode === "nmap") {
       const ports = str(params, "ports") || "--top-ports 1000";
-      const res = await run(["nmap", "-sV", "-sC", "-oX", "-", ...ports.split(/\s+/), target], { timeoutS });
+      const res = await runSandboxed(["nmap", "-sV", "-sC", "-oX", "-", ...ports.split(/\s+/), target], {
+        timeoutS,
+      });
       if (res.code !== 0) {
         return json({ success: false, error: `nmap failed: ${res.output.slice(0, 500)}` });
       }
@@ -2193,7 +2688,7 @@ Modes:
       const args = ["nuclei", "-u", target, "-jsonl", "-silent"];
       if (templates) args.push("-t", templates);
       if (severity) args.push("-s", severity);
-      const res = await run(args, { timeoutS });
+      const res = await runSandboxed(args, { timeoutS });
       if (res.code !== 0 && !res.output.trim()) {
         return json({ success: false, error: `nuclei failed: ${res.output.slice(0, 500)}` });
       }
@@ -2222,7 +2717,247 @@ Modes:
       return json({ success: true, mode: "nuclei", target, findings, finding_count: findings.length });
     }
 
+    if (mode === "recon-sweep") {
+      // Subfinder → httpx → nmap → nuclei pipeline.
+      const results: Record<string, unknown> = { target, steps: [] };
+      // Step 1: subfinder for subdomain enum.
+      const sub = await runSandboxed(["subfinder", "-d", target, "-silent"], { timeoutS: 60 });
+      const subdomains = sub.output.split("\n").filter(Boolean);
+      results.subdomains = subdomains;
+      (results.steps as unknown[]).push({ step: "subfinder", count: subdomains.length });
+      // Step 2: httpx probe on discovered hosts.
+      const hosts = subdomains.length > 0 ? subdomains : [target];
+      const httpxRes = await runSandboxed(
+        ["httpx", "-silent", "-status-code", "-title", ...hosts.slice(0, 50)],
+        {
+          timeoutS: 60,
+        },
+      );
+      const liveHosts = httpxRes.output.split("\n").filter(Boolean);
+      results.live_hosts = liveHosts;
+      (results.steps as unknown[]).push({ step: "httpx", count: liveHosts.length });
+      // Step 3: nmap on live hosts.
+      const nmapRes = await runSandboxed(
+        [
+          "nmap",
+          "-sV",
+          "--top-ports",
+          "100",
+          ...liveHosts.slice(0, 10).map((h) => h.replace(/^https?:\/\//, "").split("/")[0]),
+        ],
+        { timeoutS: 120 },
+      );
+      results.nmap_raw = nmapRes.output.slice(0, 2000);
+      (results.steps as unknown[]).push({ step: "nmap", hosts: liveHosts.length });
+      // Step 4: nuclei on live hosts.
+      const nucleiRes = await runSandboxed(
+        ["nuclei", "-u", liveHosts.slice(0, 10).join(","), "-jsonl", "-silent"],
+        {
+          timeoutS: 120,
+        },
+      );
+      const findings: unknown[] = [];
+      for (const line of nucleiRes.output.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          findings.push(JSON.parse(line));
+        } catch {
+          /* skip */
+        }
+      }
+      results.nuclei_findings = findings;
+      (results.steps as unknown[]).push({ step: "nuclei", count: findings.length });
+      return json({ success: true, mode: "recon-sweep", ...results });
+    }
+
     return json({ success: false, error: `Unknown mode '${mode}'` });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// candidates — structured vulnerability queue (shannon pattern)
+// ---------------------------------------------------------------------------
+
+const recordCandidate: ToolDef = {
+  name: "record_candidate",
+  label: "Record Candidate",
+  description: `Record a suspected vulnerability as a candidate in the scan's queue.
+
+Use this when you find a potential vulnerability but haven't proven it yet. The candidate gets a stable {CLASS}-NN id and enters the queue for validation. The validator will pick it up and either confirm it (with PoC) or reject it (with disproof).
+
+Required witness fields per class (see WITNESS_SCHEMAS): INJECTION needs slot_type, sanitization_observed, concat_occurrences, witness_payload, mismatch_reason; XSS needs render_context, encoding_observed, witness_payload; AUTH needs source_endpoint, vulnerable_code_location, missing_defense, exploitation_hypothesis, suggested_exploit_technique; AUTHZ needs role_context, guard_evidence, side_effect, minimal_witness; SSRF needs target_url, callback_received, redirect_chain, server_side_proof; MISC needs observed_behavior, expected_behavior, impact.`,
+  parameters: {
+    type: "object",
+    properties: {
+      class: { ...S("Vulnerability class."), enum: ["INJECTION", "XSS", "AUTH", "AUTHZ", "SSRF", "MISC"] },
+      witness: { type: "object", description: "Witness fields per the class schema." },
+      evidence_refs: STR_ARR("Evidence references — note ids, artifact ids, command output."),
+    },
+    required: ["class", "witness"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const cls = str(params, "class").toUpperCase();
+    const witness = (params as Record<string, unknown>).witness as Record<string, unknown> | undefined;
+    if (!witness || typeof witness !== "object") {
+      return json({ success: false, error: "witness object is required" });
+    }
+    const { valid, missing } = validateWitness(cls, witness);
+    if (!valid) {
+      return json({ success: false, error: `Missing witness fields for ${cls}: ${missing.join(", ")}` });
+    }
+    const candidate = addCandidate(dir, {
+      class: cls,
+      status: "pending",
+      witness,
+      evidence_refs: strList(params, "evidence_refs"),
+      created_by: callerAgent(ctx),
+    });
+    return json({ success: true, candidate_id: candidate.id, status: "pending" });
+  },
+};
+
+const submitVerdict: ToolDef = {
+  name: "submit_verdict",
+  label: "Submit Verdict",
+  description: `Submit a validation verdict on a candidate — confirmed, rejected, or inconclusive.
+
+Use this after testing a candidate from the queue. Confirmed requires a working PoC (PoE level 3+). Rejected requires disproof evidence. Inconclusive means you couldn't prove it either way — the candidate stays open for retry.`,
+  parameters: {
+    type: "object",
+    properties: {
+      candidate_id: S("The candidate id from record_candidate."),
+      verdict: {
+        ...S("confirmed | rejected | inconclusive"),
+        enum: ["confirmed", "rejected", "inconclusive"],
+      },
+      poe_level: { type: "number", description: "Proof-of-Exploitation level 1-4 (required for confirmed)." },
+      baseline_control: S("What the unmodified request returned — required for confirmed."),
+      what_we_tried: S("What you tried that failed — required for rejected/inconclusive."),
+    },
+    required: ["candidate_id", "verdict"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const candidateId = str(params, "candidate_id").trim();
+    const verdict = str(params, "verdict").toLowerCase();
+    const poeLevel =
+      typeof (params as Record<string, unknown>).poe_level === "number"
+        ? ((params as Record<string, unknown>).poe_level as number)
+        : 0;
+    const baselineControl = str(params, "baseline_control").trim();
+    const whatWeTried = str(params, "what_we_tried").trim();
+
+    const candidate = getCandidate(dir, candidateId);
+    if (!candidate) return json({ success: false, error: `Candidate '${candidateId}' not found` });
+
+    if (verdict === "confirmed" && poeLevel < 3) {
+      return json({
+        success: false,
+        error: "confirmed requires PoE level 3+ (data extraction or JS execution)",
+      });
+    }
+    if (verdict === "confirmed" && !baselineControl) {
+      return json({ success: false, error: "baseline_control is required for confirmed verdicts" });
+    }
+    if ((verdict === "rejected" || verdict === "inconclusive") && !whatWeTried) {
+      return json({ success: false, error: "what_we_tried is required for rejected/inconclusive verdicts" });
+    }
+
+    const v = addVerdict(dir, {
+      candidate_id: candidateId,
+      verdict: verdict as Verdict["verdict"],
+      poe_level: poeLevel,
+      baseline_control: baselineControl,
+      what_we_tried: whatWeTried,
+      agent: callerAgent(ctx),
+    });
+
+    // Update candidate status.
+    candidate.status =
+      verdict === "confirmed" ? "exploited" : verdict === "rejected" ? "false_positive" : "pending";
+    candidate.updatedAt = new Date().toISOString();
+    putCandidate(dir, candidate);
+
+    return json({ success: true, verdict_id: v.id, candidate_status: candidate.status });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// signals — reactive dispatch feed (swarm pattern)
+// ---------------------------------------------------------------------------
+
+const recordSignal: ToolDef = {
+  name: "record_signal",
+  label: "Record Signal",
+  description: `Record a signal for the root agent — a new endpoint, parameter, auth requirement, or error that needs reactive dispatch.
+
+Signals are the scan's event feed: when you find something that changes the attack surface (a new subdomain, a login form, a 403 that might be bypassable), record it here so the root agent can spawn the right specialist.`,
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { ...S("Signal type."), enum: ["new_endpoint", "new_param", "auth_required", "error", "info"] },
+      detail: S("What was observed."),
+      suggested_action: S("What the root agent should do about it."),
+    },
+    required: ["kind", "detail"],
+  },
+  async execute(_id, params, _s, _u, ctx) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const kind = str(params, "kind").toLowerCase();
+    const detail = str(params, "detail").trim();
+    const suggested = str(params, "suggested_action").trim();
+    if (!detail) return json({ success: false, error: "detail is required" });
+    const signal = addSignal(dir, { kind, detail, suggested_action: suggested, agent: callerAgent(ctx) });
+    return json({ success: true, signal_id: signal.id });
+  },
+};
+
+const listSignalsTool: ToolDef = {
+  name: "list_signals",
+  label: "List Signals",
+  description: `List signals recorded in this scan — the reactive dispatch feed. Filter by acked status.`,
+  parameters: {
+    type: "object",
+    properties: {
+      acked: { type: "boolean", description: "Filter by acknowledged status." },
+    },
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const acked = (params as Record<string, unknown>).acked as boolean | undefined;
+    const signals = listSignals(dir, acked).map((s) => ({
+      signal_id: s.id,
+      kind: s.kind,
+      detail: s.detail,
+      suggested_action: s.suggested_action,
+      acked: s.acked,
+      agent_name: s.agent,
+      created_at: s.createdAt,
+    }));
+    return json({ success: true, count: signals.length, signals });
+  },
+};
+
+const ackSignalTool: ToolDef = {
+  name: "ack_signal",
+  label: "Ack Signal",
+  description: `Mark a signal as consumed — the root agent has dispatched work for it.`,
+  parameters: {
+    type: "object",
+    properties: { signal_id: S("Signal id from list_signals.") },
+    required: ["signal_id"],
+  },
+  async execute(_id, params) {
+    const dir = scanDir();
+    if (!dir) return noScan();
+    const id = str(params, "signal_id");
+    ackSignal(dir, id);
+    return json({ success: true, acked: id });
   },
 };
 
@@ -2439,6 +3174,7 @@ export const STRIX_TOOLS: ToolDef[] = [
   updateVulnerabilityReport,
   listReportsTool,
   getReportTool,
+  disproveReport,
   recordArtifact,
   listArtifactsTool,
   recordAttackHop,
@@ -2456,5 +3192,15 @@ export const STRIX_TOOLS: ToolDef[] = [
 
   loginAndSaveSession,
   totp,
+  verifySqli,
+  verifySsti,
+  verifyPathTraversal,
+  verifyTiming,
+  diffProbe,
+  recordCandidate,
+  submitVerdict,
+  recordSignal,
+  listSignalsTool,
+  ackSignalTool,
   finishScan,
 ];

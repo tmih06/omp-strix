@@ -75,3 +75,12 @@ Rate severity by answering these four questions with evidence:
 **The Floor Rule**: If nobody ends up holding anything they should not, there is no tier low enough to be correct — the finding must be dropped rather than rated Low.
 
 **Anti-Refutation Gate**: If your severity_rationale contains the reason the attack does not matter (e.g., "only the victim sees it", "attacker already has admin"), you have written the argument for closing the finding, not rating it.
+
+## Output contract
+
+Your final message MUST contain, in order:
+1. **Verdict** — CONFIRMED / REJECTED / INCONCLUSIVE, one word on the first line.
+2. **Minimal PoC** — the exact command or request that proves or disproves it.
+3. **Baseline control** — the negative/baseline result you compared against.
+4. **Evidence package** — verbatim tool output, counterevidence considered, severity rationale.
+5. **Coverage recorded** — the record_coverage id you wrote.

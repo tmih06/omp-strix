@@ -80,17 +80,6 @@ export function beginScan(target: string, scanMode: string): ActiveScan {
     scanMode,
     startedAt: new Date().toISOString(),
   };
-  for (const sub of [
-    "notes",
-    "coverage",
-    "threat-models",
-    "reports",
-    "artifacts",
-    "attack-path",
-    "degradation",
-  ]) {
-    mkdirSync(join(dir, sub), { recursive: true });
-  }
   // Keep scan artifacts out of the project's git status.
   const gi = join(strixRoot(), ".gitignore");
   if (!existsSync(gi)) atomicWrite(gi, "*\n");
@@ -447,6 +436,155 @@ export function validateWitness(
   return { valid: missing.length === 0, missing };
 }
 
+// ---- candidates — structured vulnerability queue with stable IDs ----------
+
+export interface Candidate {
+  id: string;
+  /** Vulnerability class: INJECTION | XSS | AUTH | AUTHZ | SSRF | MISC */
+  class: string;
+  /** Current status: pending | exploited | blocked | false_positive */
+  status: "pending" | "exploited" | "blocked" | "false_positive";
+  /** Witness fields per WITNESS_SCHEMAS[class]. */
+  witness: Record<string, unknown>;
+  /** Evidence references — note ids, artifact ids, command output. */
+  evidence_refs: string[];
+  /** Agent that recorded the candidate. */
+  created_by: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Mint the next candidate id for a class: {CLASS}-NN. */
+export function nextCandidateId(dir: string, cls: string): string {
+  const prefix = cls.toUpperCase().slice(0, 4);
+  const candidatesDir = join(dir, "candidates");
+  let max = 0;
+  if (existsSync(candidatesDir)) {
+    for (const name of readdirSync(candidatesDir)) {
+      const m = name.match(new RegExp(`^${prefix}-(\\d+)\\.json$`));
+      if (m) max = Math.max(max, Number.parseInt(m[1], 10));
+    }
+  }
+  return `${prefix}-${String(max + 1).padStart(2, "0")}`;
+}
+
+export function addCandidate(
+  dir: string,
+  candidate: Omit<Candidate, "id" | "createdAt" | "updatedAt">,
+): Candidate {
+  const id = nextCandidateId(dir, candidate.class);
+  const now = new Date().toISOString();
+  const full: Candidate = { ...candidate, id, createdAt: now, updatedAt: now };
+  atomicWrite(join(dir, "candidates", `${id}.json`), JSON.stringify(full, null, 2));
+  return full;
+}
+
+export function getCandidate(dir: string, id: string): Candidate | null {
+  return readJson<Candidate>(join(dir, "candidates", `${id}.json`));
+}
+
+export function putCandidate(dir: string, candidate: Candidate): void {
+  atomicWrite(join(dir, "candidates", `${candidate.id}.json`), JSON.stringify(candidate, null, 2));
+}
+
+export function listCandidates(dir: string, status?: string): Candidate[] {
+  return listJson<Candidate>(join(dir, "candidates"))
+    .filter((c) => !status || c.status === status)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// ---- verdicts — validator decisions on candidates --------------------------
+
+export interface Verdict {
+  id: string;
+  candidate_id: string;
+  verdict: "confirmed" | "rejected" | "inconclusive";
+  /** Proof-of-Exploitation level 1-4 (shannon). */
+  poe_level: number;
+  /** Baseline control evidence — what the unmodified request returned. */
+  baseline_control: string;
+  /** What the validator tried that failed (for rejected/inconclusive). */
+  what_we_tried: string;
+  agent: string;
+  createdAt: string;
+}
+
+export function addVerdict(dir: string, verdict: Omit<Verdict, "id" | "createdAt">): Verdict {
+  const full: Verdict = { ...verdict, id: "", createdAt: new Date().toISOString() };
+  writeEntry(join(dir, "verdicts"), "verdict", full);
+  return full;
+}
+
+export function listVerdicts(dir: string, candidateId?: string): Verdict[] {
+  return listJson<Verdict>(join(dir, "verdicts"))
+    .filter((v) => !candidateId || v.candidate_id === candidateId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// ---- signals — reactive dispatch feed (swarm pattern) ----------------------
+
+export interface Signal {
+  id: string;
+  /** Signal type: new_endpoint | new_param | auth_required | error | info */
+  kind: string;
+  /** What was observed. */
+  detail: string;
+  /** Suggested next agent or action. */
+  suggested_action: string;
+  /** Whether a root agent has consumed this signal. */
+  acked: boolean;
+  agent: string;
+  createdAt: string;
+}
+
+export function addSignal(dir: string, signal: Omit<Signal, "id" | "createdAt" | "acked">): Signal {
+  const full: Signal = { ...signal, id: "", acked: false, createdAt: new Date().toISOString() };
+  writeEntry(join(dir, "signals"), "sig", full);
+  return full;
+}
+
+export function listSignals(dir: string, acked?: boolean): Signal[] {
+  return listJson<Signal>(join(dir, "signals"))
+    .filter((s) => acked === undefined || s.acked === acked)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export function ackSignal(dir: string, id: string): void {
+  const s = readJson<Signal>(join(dir, "signals", `${id}.json`));
+  if (s) {
+    s.acked = true;
+    atomicWrite(join(dir, "signals", `${id}.json`), JSON.stringify(s, null, 2));
+  }
+}
+
+// ---- finding keys — canonical dedup (artiphishell) --------------------------
+
+/** Normalize a URL path for dedup: replace numeric/UUID segments with {id}. */
+export function normalizePath(path: string): string {
+  return path
+    .replace(/\/\d+/g, "/{id}")
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/{uuid}")
+    .replace(/\/[0-9a-f]{24}/g, "/{oid}");
+}
+
+/** Canonical finding key: method + normalized path + param + CWE. */
+export function findingKey(method: string, endpoint: string, param: string, cwe: string): string {
+  const m = method.toUpperCase().trim() || "GET";
+  const p = normalizePath(endpoint.trim().toLowerCase());
+  const prm = param.trim().toLowerCase();
+  const c = cwe.trim().toUpperCase();
+  return `${m} ${p} ${prm} ${c}`.trim();
+}
+
+/** Jaccard similarity on token sets — for fuzzy title dedup. */
+export function jaccard(a: string, b: string): number {
+  const sa = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const sb = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  const inter = [...sa].filter((x) => sb.has(x)).length;
+  const union = new Set([...sa, ...sb]).size;
+  return union === 0 ? 0 : inter / union;
+}
+
 // ---- degradation — closed reason codes for partial coverage -----------------
 
 export type DegradationReason =
@@ -523,6 +661,11 @@ export interface Report {
   createdAt: string;
   updatedAt: string;
   revisions: { at: string; agent: string; reason: string; fields: string[] }[];
+  /** Lifecycle: confirmed findings count toward the report; disproven/superseded stay on file for audit. */
+  status?: "confirmed" | "disproven" | "superseded";
+  /** When status=disproven/superseded: why, and which report replaces it. */
+  status_reason?: string;
+  superseded_by?: string;
   [key: string]: unknown;
 }
 

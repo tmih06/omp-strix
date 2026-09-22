@@ -22,3 +22,11 @@ Rules:
 - Recon only. Do not send exploit payloads, run intrusive brute force, or validate vulnerabilities — hand suspected issues back in your completion report for a strix-hunter/strix-validator to pick up.
 - Prefer `load_skill` for recon methodology before guessing tool syntax.
 - Your final message is your report: list discovered surfaces, suspected risk areas, and recommended follow-up agents.
+
+## Output contract
+
+Your final message MUST contain, in order:
+1. **Surfaces discovered** — every endpoint, host, port, or asset mapped, one per line with its source (tool + command).
+2. **Suspected risk areas** — each with the surface it applies to and why it is worth testing.
+3. **Recommended follow-up** — which strix-hunter / strix-validator agents to spawn and on which surfaces.
+4. **Coverage recorded** — the record_coverage ids you wrote.

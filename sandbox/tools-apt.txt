@@ -27,12 +27,18 @@ gobuster
 dirsearch
 ffuf
 nikto
+wfuzz
+sqlmap
+medusa
+ncrack
+patator
 
 # --- credentials / cracking ---
 hydra
 john
 hashcat
 pocl-opencl-icd
+exploitdb
 
 # --- SMB / Windows / AD ---
 enum4linux
@@ -41,6 +47,9 @@ smbmap
 # --- binary analysis / forensics ---
 radare2
 binwalk
+steghide
+libimage-exiftool-perl
+foremost
 
 # --- runtime / scripting ---
 python3
