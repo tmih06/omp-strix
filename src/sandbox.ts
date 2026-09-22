@@ -59,7 +59,12 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
   if (await containerRunning()) {
     // A surviving container may still mount a previous session's cwd —
     // verify the bind source matches before reusing it.
-    const mounts = await run(["inspect", "-f", "{{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}", NAME]);
+    const mounts = await run([
+      "inspect",
+      "-f",
+      "{{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}",
+      NAME,
+    ]);
     if (mounts.stdout.includes(`${cwd}:${WORKSPACE}`)) return null;
   }
   await run(["rm", "-f", NAME]); // stale or wrong-mount container: recreate
