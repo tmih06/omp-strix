@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const NAME = "omp-strix-sandbox";
-const WORKSPACE = "/workspace";
+export const WORKSPACE = "/workspace";
 const DEFAULT_IMAGE = "ghcr.io/tmih06/omp-strix-sandbox:latest";
 const STATE_DIR = join(homedir(), ".omp", "agent", "strix");
 const ACTIVE_FILE = join(STATE_DIR, "active.json");
@@ -150,46 +150,23 @@ export function recordSandbox(workspaceRoot: string): void {
 }
 
 /**
- * Rewrite a bash tool call to run inside the sandbox container.
- * Returns the new input object, or null when the call shouldn't be rewritten.
+ * Rewrite a bash tool call that directly invokes `docker exec` on the
+ * sandbox (subagents sometimes bypass the routing): inject umask so files
+ * stay host-writable. Plain commands need no rewrite — the shadow bash
+ * tool executes them inside the container itself. Returns the new input
+ * object, or null when the call shouldn't be rewritten.
  */
 export function rewriteBashInput(input: Record<string, unknown>): Record<string, unknown> | null {
-  const sb = activeSandbox();
-  if (!sb) return null;
-
+  if (!activeSandbox()) return null;
   const command = input.command;
   if (typeof command !== "string" || command.trim() === "") return null;
-  // Direct `docker exec <sandbox> sh -c '...'` (subagents sometimes bypass the
-  // routing): inject umask so files stay host-writable. Other docker commands
-  // (start/run/logs) pass through untouched.
   const directExec = command.match(/docker\s+exec\s+(?:-\S+\s+)*omp-strix-sandbox\s+sh\s+-c\s+'/);
-  if (directExec) {
-    if (command.includes("umask")) return null;
-    const out: Record<string, unknown> = {
-      ...input,
-      command: command.replace(directExec[0], `${directExec[0]}umask 000; `),
-    };
-    delete out.cwd;
-    return out;
-  }
-  // Other docker commands (start/run/logs) pass through untouched.
-  if (/^\s*docker\s/.test(command)) return null;
-  // Map the requested cwd into the /workspace mount. Paths outside the
-  // mounted root fall back to the mount root.
-  const requested = typeof input.cwd === "string" ? input.cwd : sb.workspaceRoot;
-  const inside = requested === sb.workspaceRoot || requested.startsWith(`${sb.workspaceRoot}/`);
-  const innerCwd = inside ? join(WORKSPACE, requested.slice(sb.workspaceRoot.length)) : WORKSPACE;
-  // Single-quote the inner command: the original stays readable in the
-  // transcript (no base64). Apostrophes become the standard '\'' sequence.
-  // umask 000: the container runs as root, so files it writes into the
-  // /workspace mount must be world-writable for the host user to touch them.
-  const inner = `umask 000; cd ${JSON.stringify(innerCwd)} && ${command}`;
-  const quoted = `'${inner.replace(/'/g, `'\\''`)}'`;
+  if (!directExec || command.includes("umask")) return null;
   const out: Record<string, unknown> = {
     ...input,
-    command: `docker exec ${NAME} sh -c ${quoted}`,
+    command: command.replace(directExec[0], `${directExec[0]}umask 000; `),
   };
-  delete out.cwd; // key must be absent, not undefined — schema rejects undefined
+  delete out.cwd;
   return out;
 }
 

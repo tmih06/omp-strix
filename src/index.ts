@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { strixBash } from "./bash-tool";
 import { buildSystemPrompt } from "./prompt";
 import {
   containerRunning,
@@ -314,6 +315,10 @@ export default function (pi: ExtensionAPI) {
   installTheme();
   // Register the strix toolset up front, inactive — /strix (or a strix-*
   // subagent's tools list) activates them by name.
+  // Shadow the builtin bash: the transcript shows the agent's original
+  // command while execute() routes into the container when the sandbox is
+  // on. Registered unconditionally — it falls back to host bash otherwise.
+  pi.registerTool(strixBash);
   for (const tool of STRIX_TOOLS) {
     pi.registerTool({ ...tool, defaultInactive: true });
   }
@@ -430,11 +435,13 @@ export default function (pi: ExtensionAPI) {
     const err = await strix.sandboxStarting;
     if (err) return; // sandbox unavailable — run unsandboxed
     // The container can die mid-scan (OOM, manual rm, a subagent's own
-    // docker call). Recreate it so the rewrite never targets a dead name.
+    // docker call). Recreate it so the tool never execs into a dead name.
     if (!(await containerRunning())) {
       const restartErr = await ensureSandbox(process.cwd());
       if (restartErr) return;
     }
+    // Only direct `docker exec` calls need rewriting (umask injection);
+    // plain commands are executed in-container by the shadow bash tool.
     const rewritten = rewriteBashInput(event.input as Record<string, unknown>);
     if (rewritten) return { input: rewritten };
   });
