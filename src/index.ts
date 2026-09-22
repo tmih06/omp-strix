@@ -322,8 +322,8 @@ export default function (pi: ExtensionAPI) {
   }
   pi.registerCommand("strix", {
     description:
-      "Toggle strix security-testing mode. On: strix prompt + tools + red theme; name the target and depth in chat. Off: restores tools and stops the sandbox.",
-    handler: async (_args, ctx) => {
+      "Toggle strix security-testing mode. `/strix <target> [depth]` starts the scan immediately; bare `/strix` waits for the target in chat. Off: restores tools and stops the sandbox.",
+    handler: async (args, ctx) => {
       if (strix.active) {
         await deactivate(pi, ctx);
         return;
@@ -360,12 +360,18 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setWorkingMessage("Scanning…");
       ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
       applyStrixStatusLine(pi);
+      const target = args.trim();
       ctx.ui.notify(
-        strix.sandboxEnabled
-          ? "Strix mode on (sandboxed). Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit."
-          : "Strix mode on (NO sandbox — commands run on the host). Name the target and depth in your next message. /strix again to exit.",
+        target
+          ? `Strix mode on${strix.sandboxEnabled ? " (sandboxed)" : " (NO sandbox — host exec)"} — starting scan on: ${target}`
+          : strix.sandboxEnabled
+            ? "Strix mode on (sandboxed). Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit."
+            : "Strix mode on (NO sandbox — commands run on the host). Name the target and depth in your next message. /strix again to exit.",
         "info",
       );
+      // Args become the first prompt: before_agent_start captures it as the
+      // scan target and the agent starts working immediately.
+      if (target) pi.sendUserMessage?.(target);
     },
   });
 

@@ -34,13 +34,13 @@ omp plugin link /path/to/omp-strix
 ```
 
 ## Usage
-
 ```
-/strix        # toggle on
-/strix        # toggle off
+/strix <target> [depth]   # start scanning immediately
+/strix                   # toggle on — target named in next message
+/strix                   # toggle off
 ```
 
-`/strix` turns strix mode on. On activation it asks whether to run shell commands inside the Docker sandbox (decline → commands run on the host). Name the **target** and **depth** in your next message — the first prompt after activation is captured as the scan target and starts the scan:
+`/strix` turns strix mode on. On activation it asks whether to run shell commands inside the Docker sandbox (decline → commands run on the host). Pass the **target** (and optionally **depth**) as command args to start immediately, or name them in your next message — the first prompt after activation is captured as the scan target and starts the scan:
 
 ```
 /strix
