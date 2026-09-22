@@ -25,10 +25,18 @@ import {
   rewriteBashInput,
   stopSandbox,
 } from "./sandbox";
-import { activeScan, beginScan, endScan } from "./state";
+import {
+  activeScan,
+  beginScan,
+  endScan,
+  recordGoalSnapshot,
+  recordSubagentUsage,
+  resetScanMetrics,
+  scanMetrics,
+} from "./state";
 import { STRIX_TOOLS } from "./tools";
 
-const TOOL_NAMES = STRIX_TOOLS.map((t) => t.name);
+const TOOL_NAMES = [...STRIX_TOOLS.map((t) => t.name), "goal"];
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 interface StrixState {
@@ -279,6 +287,19 @@ async function deactivate(
   if (strix.preTools) await pi.setActiveTools(strix.preTools);
   strix.preTools = null;
   endScan();
+  // If the scan goal is still live, ask the model to drop it — the extension
+  // API has no programmatic goal handle, so this goes through the tool.
+  const goal = scanMetrics.goal;
+  if (goal && (goal.status === "active" || goal.status === "paused")) {
+    try {
+      pi.sendUserMessage?.(
+        'Strix mode was turned off. Call the goal tool with op "drop" to end goal tracking, then continue.',
+        { attribution: "agent" },
+      );
+    } catch {
+      /* goal tool may be gone already */
+    }
+  }
   try {
     (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", "");
   } catch {
@@ -290,10 +311,6 @@ async function deactivate(
 }
 
 export default function (pi: ExtensionAPI) {
-  for (const tool of STRIX_TOOLS) {
-    pi.registerTool({ ...tool, defaultInactive: true });
-  }
-
   installTheme();
   pi.registerCommand("strix", {
     description:
@@ -350,6 +367,7 @@ export default function (pi: ExtensionAPI) {
     if (!strix.scanStarted) {
       strix.scanStarted = true;
       const target = event.prompt?.trim() || "unspecified";
+      resetScanMetrics();
       beginScan(target, "conversation");
       pi.setSessionName(`strix: ${target.slice(0, 60)}`);
     }
@@ -375,6 +393,27 @@ export default function (pi: ExtensionAPI) {
     if (err) return; // sandbox unavailable — run unsandboxed
     const rewritten = rewriteBashInput(event.input as Record<string, unknown>);
     if (rewritten) return { input: rewritten };
+  });
+
+  // Track the native goal record (tokens + wall-clock) while strix mode is on.
+  // The root agent creates the goal via the `goal` tool at scan start; this
+  // handler mirrors each update into the scan dir so finish_scan and the
+  // final report can read the latest counters.
+  pi.on("goal_updated", (event) => {
+    if (!strix.active) return;
+    const goal = (event as { goal?: unknown }).goal;
+    recordGoalSnapshot((goal ?? null) as Parameters<typeof recordGoalSnapshot>[0]);
+  });
+
+  // Goal accounting only covers the main session — accumulate subagent usage
+  // from `task` tool results so the scan's true token cost is reported.
+  pi.on("tool_result", (event) => {
+    if (!strix.active) return;
+    const e = event as { toolName?: string; details?: unknown };
+    if (e.toolName !== "task" || !e.details || typeof e.details !== "object") return;
+    const d = e.details as { usage?: unknown; results?: unknown[]; totalDurationMs?: number };
+    const runs = Array.isArray(d.results) ? d.results.length : 0;
+    recordSubagentUsage(d.usage, typeof d.totalDurationMs === "number" ? d.totalDurationMs : 0, runs);
   });
 
   pi.on("session_shutdown", async () => {

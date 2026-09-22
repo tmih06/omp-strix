@@ -30,6 +30,7 @@ import {
   putReport,
   putThreatModel,
   scanDir,
+  scanMetrics,
   writeFinalReport,
 } from "./state";
 
@@ -1313,6 +1314,10 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     const reports = listReports(dir);
     const coverage = listCoverage(dir);
     const open = coverage.filter((e) => e.outcome === "needs_follow_up");
+    const goal = scanMetrics.goal;
+    const durationSeconds =
+      goal?.timeUsedSeconds ??
+      (scan?.startedAt ? Math.round((Date.now() - Date.parse(scan.startedAt)) / 1000) : null);
     const payload = {
       scan_id: scan?.scanId ?? null,
       target: scan?.target ?? null,
@@ -1320,6 +1325,14 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
       started_at: scan?.startedAt ?? null,
       finished_at: new Date().toISOString(),
       executive_summary: str(params, "executive_summary"),
+      metrics: {
+        duration_seconds: durationSeconds,
+        main_session_tokens: goal?.tokensUsed ?? null,
+        subagent_tokens: scanMetrics.subagentUsage.totalTokens || null,
+        subagent_runs: scanMetrics.subagentRuns,
+        subagent_duration_ms: scanMetrics.subagentDurationMs || null,
+        goal_status: goal?.status ?? null,
+      },
       findings: reports,
       coverage,
       open_follow_ups: open,
@@ -1330,7 +1343,8 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     await stopSandbox();
     return json({
       success: true,
-      message: "Scan finished. Final report written (JSON + Markdown).",
+      message:
+        'Scan finished. Final report written (JSON + Markdown). Now call the goal tool with op "complete" to close goal tracking and show the final token/time report.',
       report_path: join(dir, "final-report.md"),
       report_json_path: join(dir, "final-report.json"),
       findings: reports.length,

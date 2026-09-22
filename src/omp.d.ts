@@ -45,6 +45,32 @@ declare module "@oh-my-pi/pi-coding-agent" {
     [key: string]: unknown;
   }
 
+  export interface GoalUpdatedEvent {
+    type: "goal_updated";
+    goal: {
+      id: string;
+      objective: string;
+      status: string;
+      tokenBudget?: number;
+      tokensUsed: number;
+      timeUsedSeconds: number;
+      createdAt: number;
+      updatedAt: number;
+    } | null;
+    [key: string]: unknown;
+  }
+
+  export interface ToolResultEvent {
+    type: "tool_result";
+    toolName: string;
+    toolCallId: string;
+    input: Record<string, unknown>;
+    content: unknown[];
+    isError: boolean;
+    details?: unknown;
+    [key: string]: unknown;
+  }
+
   export interface ExtensionAPI {
     zod: unknown;
     on(
@@ -67,6 +93,8 @@ declare module "@oh-my-pi/pi-coding-agent" {
         | { block?: boolean; reason?: string; input?: Record<string, unknown> }
         | undefined,
     ): void;
+    on(event: "goal_updated", handler: (event: GoalUpdatedEvent, ctx: ExtensionContext) => unknown): void;
+    on(event: "tool_result", handler: (event: ToolResultEvent, ctx: ExtensionContext) => unknown): void;
     on(event: string, handler: (event: never, ctx: ExtensionContext) => unknown): void;
     registerTool(def: {
       name: string;
@@ -88,6 +116,10 @@ declare module "@oh-my-pi/pi-coding-agent" {
     setSessionName(name: string): void;
     getSessionName(): string;
     sendMessage?(msg: unknown, opts?: unknown): void;
+    sendUserMessage?(
+      content: string,
+      opts?: { deliverAs?: "steer" | "followUp" | "nextTurn" | "aside"; attribution?: "user" | "agent" },
+    ): void;
     appendEntry?(customType: string, data?: unknown): void;
     [key: string]: unknown;
   }
