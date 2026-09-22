@@ -391,12 +391,20 @@ export default function (pi: ExtensionAPI) {
         if (!strix.active) return;
         const sm = ctx.sessionManager as
           | {
-              getUsageStatistics?: () => { totalTokens?: number };
+              getUsageStatistics?: () => {
+                input?: number;
+                output?: number;
+                cacheWrite?: number;
+              };
               getSessionFile?: () => string | undefined;
             }
           | undefined;
-        const main = sm?.getUsageStatistics?.()?.totalTokens ?? 0;
-        const sub = collectSubagentMetrics(sm?.getSessionFile?.()).subagentUsage.totalTokens;
+        // Match the agent hub's accounting: input+output+cacheWrite per
+        // assistant message — cacheRead re-reads full context each turn and
+        // would inflate the sum far past the hub's total.
+        const u = sm?.getUsageStatistics?.();
+        const main = (u?.input ?? 0) + (u?.output ?? 0) + (u?.cacheWrite ?? 0);
+        const sub = collectSubagentMetrics(sm?.getSessionFile?.()).subagentUsage.effectiveTokens;
         const total = main + sub;
         if (total > 0) {
           const fmt = (n: number) =>

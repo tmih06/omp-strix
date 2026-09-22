@@ -128,6 +128,9 @@ export interface UsageTotals {
   cacheRead: number;
   cacheWrite: number;
   totalTokens: number;
+  /** input+output+cacheWrite — excludes cacheRead, matching the agent hub's
+   *  per-message accounting (cacheRead re-reads full context each turn). */
+  effectiveTokens: number;
   costTotal: number;
 }
 
@@ -144,6 +147,7 @@ const emptyUsage = (): UsageTotals => ({
   cacheRead: 0,
   cacheWrite: 0,
   totalTokens: 0,
+  effectiveTokens: 0,
   costTotal: 0,
 });
 
@@ -196,6 +200,7 @@ export function collectSubagentMetrics(sessionFile: string | undefined): ScanMet
         metrics.subagentUsage.cacheRead += num("cacheRead");
         metrics.subagentUsage.cacheWrite += num("cacheWrite");
         metrics.subagentUsage.totalTokens += num("totalTokens");
+        metrics.subagentUsage.effectiveTokens += num("input") + num("output") + num("cacheWrite");
         const cost = u.cost as Record<string, unknown> | undefined;
         if (cost && typeof cost.total === "number") metrics.subagentUsage.costTotal += cost.total;
       }
