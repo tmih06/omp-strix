@@ -15,7 +15,10 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { activeSandbox, WORKSPACE } from "./sandbox";
 
 type Json = Record<string, unknown>;
-type ThemeLike = { fg(color: string, text: string): string };
+type ThemeLike = {
+  fg(color: string, text: string): string;
+  styledSymbol?(key: string, color?: string): string;
+};
 
 const MAX_OUTPUT = 200 * 1024; // tail-kept
 const DEFAULT_TIMEOUT_S = 300;
@@ -85,10 +88,11 @@ export function strixBash(pi: ExtensionAPI) {
     };
     highlightCode?: (code: string, lang?: string, theme?: unknown) => string[];
   };
-
-  /** `$ cmd` / `▣ cmd` preview with bash syntax highlighting. */
+  /** `$ cmd` / `🐳 cmd` preview with bash syntax highlighting. */
   const commandLines = (cmd: string, sandboxed: boolean, theme: ThemeLike): string[] => {
-    const icon = sandboxed ? "▣" : "$";
+    // lang.docker resolves to 🐳 (unicode), the nerd-font whale, or "docker"
+    // (ascii) depending on the active symbol preset.
+    const icon = sandboxed ? (theme.styledSymbol?.("lang.docker", "accent") ?? "▣") : "$";
     const prefix = theme.fg("dim", `${icon} `);
     const highlighted = highlightCode?.(cmd, "bash", theme) ?? cmd.split("\n");
     return highlighted.map((l, i) => (i === 0 ? `${prefix}${l}` : `   ${l}`));
