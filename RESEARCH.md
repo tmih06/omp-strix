@@ -242,10 +242,24 @@ Plugins control both types of titles:
   });
   ```
   *(Content is capped at 10 lines).*
-- **Status Bar (`setStatus`)**: Adds or updates segments on the status bar:
+- **Status Bar (`setStatus`)**: Adds extra **lines below** the status bar (hook-status lines, gated by `statusLine.showHookStatus`, sorted by key). It does **not** add segments to the bar itself and cannot hide built-in segments:
   ```ts
-  ctx.ui.setStatus("plan_status", "📐 PLAN ACTIVE");
+  ctx.ui.setStatus("plan_status", "📐 PLAN ACTIVE");  // extra line under the bar
+  ctx.ui.setStatus("plan_status", undefined);        // remove the line
   ```
+- **Built-in segments are settings-driven, not extension-driven.** The bar's segments (`path`, `git`, `pr`, `model`, `cost`, …) come from `statusLine.preset` + `statusLine.leftSegments`/`rightSegments` (the latter only apply when `preset` is `"custom"`). There is no `ExtensionAPI` for them, and `ctx.ui.setFooter`/`setHeader` are **no-op stubs** in interactive mode (`extension-ui-controller.ts`). To hide segments at runtime, use the live settings singleton's non-persisted override layer:
+  ```ts
+  const s = pi.pi.settings; // live Settings singleton (throws before init)
+  s.override("statusLine.preset", "custom");
+  s.override("statusLine.leftSegments", filteredIds);   // e.g. drop "path","git","pr"
+  s.override("statusLine.rightSegments", filteredIds);
+  // The component only re-reads the group when the sessionAccent signal fires:
+  const accent = s.get("statusLine.sessionAccent") !== false;
+  s.override("statusLine.sessionAccent", !accent);
+  s.override("statusLine.sessionAccent", accent);       // lands back on user value
+  // Restore: s.clearOverride(key) for each key, then the same accent nudge.
+  ```
+  `override()` is runtime-only (never written to config) and dies with the session — safe for mode-scoped chrome changes. Caveat: `leftSegments`/`rightSegments` take effect only under preset `"custom"`, so resolve the user's effective layout (preset arrays + their own overrides) before filtering, and re-pin `separator`/`segmentOptions` which would otherwise fall back to the custom preset's defaults.
 - **Working Message**: Overrides the spinner message during model generation:
   ```ts
   ctx.ui.setWorkingMessage("Generating architectural specifications...");
@@ -284,7 +298,7 @@ If an extension returns:
   systemPrompt: string | string[]
 }
 ```
-The Extension Runner replaces block 0 of the system prompt for that turn and its continuations.
+The Extension Runner replaces the **entire** system-prompt array for that turn (`emitBeforeAgentStart` → `setTurnSystemPromptOverride` → `agent.setSystemPrompt`). The override is per-turn and cleared in the turn's `finally`, so a mode handler must return the prompt on **every** `before_agent_start` event while active — which also means mid-turn base-prompt rebuilds preserve the override. Because the whole array is replaced (not just block 0), the substitute prompt must be self-contained: environment, project, and tool-inventory blocks are all dropped.
 
 ### 7.2. Reference Implementation: Custom Architect / Plan Mode
 

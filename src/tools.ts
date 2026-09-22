@@ -1247,8 +1247,7 @@ const finishScan: ToolDef = {
   label: "Finish Scan",
   description: `Close the scan and write the final report.
 
-Call only when testing is complete: every hypothesis resolved, coverage reconciled, findings filed. Assembles final-report.json in the scan directory from the reports, coverage ledger, and threat models, marks the scan finished, and tears down the sandbox.
-
+Call only when testing is complete: every hypothesis resolved, coverage reconciled, findings filed. Assembles final-report.json plus a human-readable final-report.md in the scan directory from the reports, coverage ledger, and threat models, marks the scan finished, and tears down the sandbox. Each filed report also carries a sibling .md next to its .json under reports/.
 Before calling: list_reports to confirm what was filed, and list_coverage(outcome="needs_follow_up") to confirm nothing is still open.`,
   parameters: {
     type: "object",
@@ -1281,8 +1280,9 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     await stopSandbox();
     return json({
       success: true,
-      message: "Scan finished. Final report written.",
-      report_path: join(dir, "final-report.json"),
+      message: "Scan finished. Final report written (JSON + Markdown).",
+      report_path: join(dir, "final-report.md"),
+      report_json_path: join(dir, "final-report.json"),
       findings: reports.length,
       coverage_entries: coverage.length,
       open_follow_ups: open.length,
