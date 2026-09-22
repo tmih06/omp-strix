@@ -256,10 +256,13 @@ function applyStrixStatusLine(pi: ExtensionAPI): void {
   }
   s.override("statusLine.preset", "custom");
   s.override("statusLine.leftSegments", newLeft);
-  s.override(
-    "statusLine.rightSegments",
-    right.filter((id) => !HIDDEN_SEGMENTS.has(id)),
-  );
+  const newRight = right.filter((id) => !HIDDEN_SEGMENTS.has(id));
+  // Show cumulative token usage beside cost.
+  if (!newRight.includes("token_total")) {
+    const at = newRight.indexOf("cost");
+    newRight.splice(at >= 0 ? at : newRight.length, 0, "token_total");
+  }
+  s.override("statusLine.rightSegments", newRight);
   s.override("statusLine.separator", separator);
   s.override("statusLine.segmentOptions", segmentOptions);
   // Suppress the below-bar hook-status lines so "◆ STRIX" isn't duplicated
