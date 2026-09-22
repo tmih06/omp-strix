@@ -16,9 +16,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run check
-
       - name: Pack tarball (prod files only — `files` whitelist in package.json)
-        run: npm pack --pack-destination dist
+        run: mkdir -p dist && npm pack --pack-destination dist
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
