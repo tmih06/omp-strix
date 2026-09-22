@@ -402,6 +402,25 @@ export function getPlan(dir: string): PlanTask[] {
   return readJson<PlanTask[]>(join(dir, "plan.json")) ?? [];
 }
 
+// ---- witness schemas — typed fields required per vulnerability class --------
+
+/** Required witness fields for each vulnerability class. */
+export const WITNESS_SCHEMAS: Record<string, string[]> = {
+  INJECTION: ["slot_type", "sanitization_observed", "concat_occurrences", "witness_payload", "mismatch_reason"],
+  XSS: ["render_context", "encoding_observed", "witness_payload"],
+  AUTH: ["source_endpoint", "vulnerable_code_location", "missing_defense", "exploitation_hypothesis", "suggested_exploit_technique"],
+  AUTHZ: ["role_context", "guard_evidence", "side_effect", "minimal_witness"],
+  SSRF: ["target_url", "callback_received", "redirect_chain", "server_side_proof"],
+  MISC: ["observed_behavior", "expected_behavior", "impact"],
+};
+
+/** Validate that a candidate has all required witness fields for its class. */
+export function validateWitness(cls: string, witness: Record<string, unknown>): { valid: boolean; missing: string[] } {
+  const required = WITNESS_SCHEMAS[cls] ?? WITNESS_SCHEMAS.MISC;
+  const missing = required.filter((f) => !(f in witness) || witness[f] === undefined || witness[f] === null || String(witness[f]).trim() === "");
+  return { valid: missing.length === 0, missing };
+}
+
 // ---- threat model ----------------------------------------------------------
 
 export interface ThreatModel {
