@@ -170,15 +170,28 @@ function hexPreview(raw: string, maxBytes = 256): string {
   return lines.join("\n");
 }
 
+/** Wrap untrusted command output so the model treats it as data, not instructions. */
+function sanitizeOutput(raw: string): string {
+  // Strip sequences that could be interpreted as prompt boundaries or
+  // instructions embedded in target-side output (HTTP responses, banners, etc.).
+  return raw
+    .replace(/={10,}/g, "===")
+    .replace(/-{10,}/g, "---")
+    .replace(/\[SYSTEM[^\]]*\]/gi, "[FILTERED]")
+    .replace(/\[INST[^\]]*\]/gi, "[FILTERED]")
+    .replace(/<\|[^|]*\|>/g, "[FILTERED]");
+}
+
 export function boundOutput(
   raw: string,
   timedOut: boolean,
   timeoutS: number,
 ): { text: string; savedTo?: string } {
   const suffix = timedOut ? `\n\n[command timed out after ${timeoutS}s — partial output shown]` : "";
+  const sanitized = sanitizeOutput(raw);
 
   // Binary content → hex preview, never raw bytes into context.
-  if (isBinary(raw)) {
+  if (isBinary(sanitized)) {
     const dir = scanDir();
     let savedTo: string | undefined;
     if (dir) {
@@ -195,7 +208,7 @@ export function boundOutput(
   }
 
   // Minified JS/CSS → dense preview + save full.
-  if (isMinified(raw) && raw.length > CONTEXT_OUTPUT_CAP) {
+  if (isMinified(sanitized) && sanitized.length > CONTEXT_OUTPUT_CAP) {
     const dir = scanDir();
     let savedTo: string | undefined;
     if (dir) {
@@ -205,15 +218,15 @@ export function boundOutput(
       writeFileSync(join(outDir, name), raw, "utf8");
       savedTo = join(outDir, name);
     }
-    const preview = raw.slice(0, 2048);
+    const preview = sanitized.slice(0, 2048);
     return {
       text: `[MINIFIED CONTENT — ${raw.length} chars${savedTo ? `, saved to ${savedTo}` : ""}]\n${preview}\n[… use grep/read on the saved file for details …]${suffix}`,
       savedTo,
     };
   }
 
-  if (raw.length <= CONTEXT_OUTPUT_CAP) {
-    return { text: (raw || "(no output)") + suffix };
+  if (sanitized.length <= CONTEXT_OUTPUT_CAP) {
+    return { text: (sanitized || "(no output)") + suffix };
   }
   let savedTo: string | undefined;
   const dir = scanDir();
@@ -224,9 +237,9 @@ export function boundOutput(
     writeFileSync(join(outDir, name), raw, "utf8");
     savedTo = join(outDir, name);
   }
-  const head = raw.slice(0, 4 * 1024);
-  const tail = raw.slice(-CONTEXT_OUTPUT_CAP + 4 * 1024);
-  const omitted = raw.length - head.length - tail.length;
+  const head = sanitized.slice(0, 4 * 1024);
+  const tail = sanitized.slice(-CONTEXT_OUTPUT_CAP + 4 * 1024);
+  const omitted = sanitized.length - head.length - tail.length;
   const note = savedTo
     ? `full output saved to ${savedTo} — grep/read it for details`
     : "output too large to save";
