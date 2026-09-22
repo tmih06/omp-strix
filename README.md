@@ -25,7 +25,7 @@ On activation the plugin:
 2. Activates the strix toolset (19 tools, `defaultInactive` until then).
 3. Switches to the `strix-red` theme and names the session `strix`.
 
-On the first `bash` call the plugin builds the `omp-strix-sandbox` docker image (Debian slim + nmap, masscan, gobuster, sqlmap, hydra, john, python3, …) and starts a shared container with the session cwd mounted at `/workspace`; every `bash` call is rewritten to `docker exec` into it.
+On the first `bash` call the plugin pulls the prebuilt `ghcr.io/tmih06/omp-strix-sandbox` image (Debian slim + nmap, masscan, gobuster, sqlmap, hydra, john, python3, …) and starts a shared container with the session cwd mounted at `/workspace`; every `bash` call is rewritten to `docker exec` into it. If the pull fails and a `sandbox/Dockerfile` is present (source checkout), it builds locally instead.
 
 `finish_scan` (or `/strix` off, or session shutdown) writes `final-report.json` into the scan dir and tears the container down.
 
@@ -55,7 +55,9 @@ Spawned via the native `task` tool:
 
 Commands run inside a docker container (`runc`), not on the host. The session cwd is bind-mounted at `/workspace` so file tools and shell see the same tree.
 
-- `STRIX_SANDBOX_IMAGE` — override the image (pulled instead of built)
+The image is prebuilt on GHCR by `.github/workflows/sandbox-image.yml` (multi-arch amd64+arm64, pushed on changes to `sandbox/`). Users pull it; no local build needed. To publish: push the repo to GitHub and the workflow runs automatically — the package lands at `ghcr.io/<owner>/omp-strix-sandbox` (make it public under Packages → Settings, or users need `docker login ghcr.io`).
+
+- `STRIX_SANDBOX_IMAGE` — override the image (any registry ref; falls back to local `docker build` if pull fails and `sandbox/Dockerfile` exists)
 - `STRIX_SANDBOX=off` — disable sandboxing entirely
 
 ## Layout

@@ -11,14 +11,14 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const NAME = "omp-strix-sandbox";
 const WORKSPACE = "/workspace";
-const DEFAULT_IMAGE = "omp-strix-sandbox";
+const DEFAULT_IMAGE = "ghcr.io/tmih06/omp-strix-sandbox:latest";
 const STATE_DIR = join(homedir(), ".omp", "agent", "strix");
 const ACTIVE_FILE = join(STATE_DIR, "active.json");
 const DOCKERFILE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "sandbox");
@@ -64,15 +64,17 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
   const image = sandboxImage();
   const inspect = await run(["image", "inspect", image]);
   if (inspect.code !== 0) {
-    if (image === DEFAULT_IMAGE) {
+    // Pull first — the default image is prebuilt on GHCR. Fall back to a
+    // local build only when the pull fails AND a Dockerfile is present
+    // (source checkout / offline dev).
+    const pull = await run(["pull", image]);
+    if (pull.code !== 0) {
+      if (!existsSync(join(DOCKERFILE_DIR, "Dockerfile"))) {
+        return `docker pull ${image} failed: ${pull.stderr.trim() || pull.stdout.trim()}`;
+      }
       const build = await run(["build", "-t", image, DOCKERFILE_DIR]);
       if (build.code !== 0) {
         return `docker build ${image} failed: ${build.stderr.trim() || build.stdout.trim()}`;
-      }
-    } else {
-      const pull = await run(["pull", image]);
-      if (pull.code !== 0) {
-        return `docker pull ${image} failed: ${pull.stderr.trim() || pull.stdout.trim()}`;
       }
     }
   }
