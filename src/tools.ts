@@ -2108,6 +2108,117 @@ The script runs inside the sandbox when active. stdout/stderr are captured and r
     };
   },
 };
+// ---------------------------------------------------------------------------
+// scan — structured nmap/nuclei wrapper with parsed output
+// ---------------------------------------------------------------------------
+
+const scan: ToolDef = {
+  name: "scan",
+  label: "Scan",
+  description: `Run a structured security scan — nmap port scan or nuclei template scan — with parsed, deduplicated output.
+
+Unlike raw bash (which returns unstructured text), scan parses the tool's output into a structured result: open ports with services, or findings with severity/template/host. Use it for recon and vuln scanning instead of parsing nmap/nuclei output manually.
+
+Modes:
+- nmap: port scan with service detection (default: top 1000 ports)
+- nuclei: template-based vuln scan (default: all templates)`,
+  parameters: {
+    type: "object",
+    properties: {
+      mode: { type: "string", enum: ["nmap", "nuclei"], description: "Scan type." },
+      target: S("The target host/IP/URL."),
+      ports: S("Port specification for nmap (default: top 1000)."),
+      templates: S("Nuclei template filter (default: all)."),
+      severity: S("Nuclei severity filter (e.g. 'critical,high')."),
+      timeout: { type: "number", description: "Timeout in seconds (default 300)." },
+    },
+    required: ["mode", "target"],
+  },
+  async execute(_id, params) {
+    const mode = str(params, "mode");
+    const target = str(params, "target").trim();
+    if (!target) return json({ success: false, error: "target is required" });
+    const timeoutS =
+      typeof (params as Record<string, unknown>).timeout === "number"
+        ? Math.min(Math.max(30, (params as Record<string, unknown>).timeout as number), 600)
+        : 300;
+
+    if (mode === "nmap") {
+      const ports = str(params, "ports") || "--top-ports 1000";
+      const res = await run(["nmap", "-sV", "-sC", "-oX", "-", ...ports.split(/\s+/), target], { timeoutS });
+      if (res.code !== 0) {
+        return json({ success: false, error: `nmap failed: ${res.output.slice(0, 500)}` });
+      }
+      // Parse XML output into structured ports.
+      const ports_found: {
+        port: number;
+        protocol: string;
+        service: string;
+        version: string;
+        state: string;
+      }[] = [];
+      const portRe =
+        /<port\s+protocol="([^"]+)"\s+portid="(\d+)"[^>]*>[\s\S]*?<state\s+state="([^"]+)"[^>]*\/>[\s\S]*?<service\s+name="([^"]*)"[^>]*?(?:product="([^"]*)")?[^>]*?(?:version="([^"]*)")?[^>]*\/>/g;
+      let m = portRe.exec(res.output);
+      while (m !== null) {
+        if (m[3] === "open") {
+          ports_found.push({
+            port: Number.parseInt(m[2], 10),
+            protocol: m[1],
+            state: m[3],
+            service: m[4] || "unknown",
+            version: [m[5], m[6]].filter(Boolean).join(" "),
+          });
+        }
+        m = portRe.exec(res.output);
+      }
+      return json({
+        success: true,
+        mode: "nmap",
+        target,
+        ports: ports_found,
+        port_count: ports_found.length,
+      });
+    }
+
+    if (mode === "nuclei") {
+      const templates = str(params, "templates");
+      const severity = str(params, "severity");
+      const args = ["nuclei", "-u", target, "-jsonl", "-silent"];
+      if (templates) args.push("-t", templates);
+      if (severity) args.push("-s", severity);
+      const res = await run(args, { timeoutS });
+      if (res.code !== 0 && !res.output.trim()) {
+        return json({ success: false, error: `nuclei failed: ${res.output.slice(0, 500)}` });
+      }
+      const findings: {
+        template: string;
+        severity: string;
+        host: string;
+        matched: string;
+        description: string;
+      }[] = [];
+      for (const line of res.output.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const j = JSON.parse(line);
+          findings.push({
+            template: j.templateID ?? j.template ?? "unknown",
+            severity: j.info?.severity ?? "unknown",
+            host: j.host ?? target,
+            matched: j["matched-at"] ?? j.matched ?? "",
+            description: j.info?.name ?? j.info?.description ?? "",
+          });
+        } catch {
+          // Skip non-JSON lines.
+        }
+      }
+      return json({ success: true, mode: "nuclei", target, findings, finding_count: findings.length });
+    }
+
+    return json({ success: false, error: `Unknown mode '${mode}'` });
+  },
+};
 export const STRIX_TOOLS: ToolDef[] = [
   think,
   loadSkill,
@@ -2134,8 +2245,10 @@ export const STRIX_TOOLS: ToolDef[] = [
   updatePlan,
   getPlanTool,
   fetchUrl,
+
   thought,
   terminal,
+  scan,
   python,
 
   finishScan,
