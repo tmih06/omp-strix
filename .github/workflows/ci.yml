@@ -22,9 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-
       - name: Pack tarball
-        run: npm pack --pack-destination dist
+        run: mkdir -p dist && npm pack --pack-destination dist
 
       - name: Assert prod-only contents
         run: |
