@@ -193,6 +193,8 @@ const STATUS_LINE_OVERRIDE_KEYS = [
   "statusLine.separator",
   "statusLine.segmentOptions",
   "statusLine.showHookStatus",
+  // resyncStatusLine() overrides this to force a re-read; must be cleared too.
+  "statusLine.sessionAccent",
 ] as const;
 
 let statusLineTaken = false;
@@ -277,6 +279,7 @@ function installTheme(): void {
 async function deactivate(
   pi: ExtensionAPI,
   ctx: { ui: { notify(m: string, l?: string): void } },
+  opts?: { skipGoalSteer?: boolean },
 ): Promise<void> {
   strix.active = false;
   restoreStatusLine(pi);
@@ -290,7 +293,7 @@ async function deactivate(
   // If the scan goal is still live, ask the model to drop it — the extension
   // API has no programmatic goal handle, so this goes through the tool.
   const goal = scanMetrics.goal;
-  if (goal && (goal.status === "active" || goal.status === "paused")) {
+  if (!opts?.skipGoalSteer && goal && (goal.status === "active" || goal.status === "paused")) {
     try {
       pi.sendUserMessage?.(
         'Strix mode was turned off. Call the goal tool with op "drop" to end goal tracking, then continue.',
@@ -312,6 +315,11 @@ async function deactivate(
 
 export default function (pi: ExtensionAPI) {
   installTheme();
+  // Register the strix toolset up front, inactive — /strix (or a strix-*
+  // subagent's tools list) activates them by name.
+  for (const tool of STRIX_TOOLS) {
+    pi.registerTool({ ...tool, defaultInactive: true });
+  }
   pi.registerCommand("strix", {
     description:
       "Toggle strix security-testing mode. On: strix prompt + tools + red theme; name the target and depth in chat. Off: restores tools and stops the sandbox.",
@@ -323,8 +331,9 @@ export default function (pi: ExtensionAPI) {
 
       // Ask whether to run commands inside the docker sandbox. Declining
       // skips the image pull entirely — bash runs on the host.
-      let sandbox = true;
-      if (ctx.hasUI && ctx.ui.confirm) {
+      // STRIX_SANDBOX=off skips the prompt entirely (README contract).
+      let sandbox = process.env.STRIX_SANDBOX !== "off";
+      if (sandbox && ctx.hasUI && ctx.ui.confirm) {
         try {
           sandbox = await ctx.ui.confirm(
             "Strix sandbox",
@@ -334,7 +343,7 @@ export default function (pi: ExtensionAPI) {
           sandbox = true;
         }
       }
-      strix.sandboxEnabled = sandbox && process.env.STRIX_SANDBOX !== "off";
+      strix.sandboxEnabled = sandbox;
 
       installTheme();
       strix.systemPrompt = buildSystemPrompt({ sandbox: strix.sandboxEnabled });
@@ -407,9 +416,16 @@ export default function (pi: ExtensionAPI) {
 
   // Goal accounting only covers the main session — accumulate subagent usage
   // from `task` tool results so the scan's true token cost is reported.
-  pi.on("tool_result", (event) => {
+  pi.on("tool_result", async (event, ctx) => {
     if (!strix.active) return;
     const e = event as { toolName?: string; details?: unknown };
+    // finish_scan ends the mode too — the tool can't reach this module's
+    // state, so the runner-side hook does the teardown. Skip the goal-drop
+    // steer: finish_scan already tells the model to complete the goal.
+    if (e.toolName === "finish_scan") {
+      await deactivate(pi, ctx, { skipGoalSteer: true });
+      return;
+    }
     if (e.toolName !== "task" || !e.details || typeof e.details !== "object") return;
     const d = e.details as { usage?: unknown; results?: unknown[]; totalDurationMs?: number };
     const runs = Array.isArray(d.results) ? d.results.length : 0;
@@ -420,6 +436,9 @@ export default function (pi: ExtensionAPI) {
     if (strix.active || activeScan()) {
       strix.active = false;
       strix.scanStarted = false;
+      // Rotate active.json aside — otherwise scanDir()'s .last fallback lets
+      // the next session's tools write into this dead scan.
+      endScan();
       markSandboxActive(false);
       await stopSandbox();
     }

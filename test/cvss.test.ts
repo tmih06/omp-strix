@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { cvssBaseScore, cvssSeverity } from "../src/cvss";
+import { toCvssMetrics } from "../src/tools";
 
 // Reference vectors from the CVSS v3.1 spec examples.
 const FULL = { AV: "N", AC: "L", PR: "N", UI: "N", S: "U", C: "H", I: "H", A: "H" };
@@ -54,5 +55,25 @@ describe("cvssSeverity", () => {
     expect(cvssSeverity(7.0)).toBe("high");
     expect(cvssSeverity(8.9)).toBe("high");
     expect(cvssSeverity(9.0)).toBe("critical");
+  });
+});
+
+describe("toCvssMetrics (tool param snake_case → spec keys)", () => {
+  test("maps all 8 snake_case metrics so cvssBaseScore accepts them", () => {
+    const r = cvssBaseScore(
+      toCvssMetrics({
+        attack_vector: "N",
+        attack_complexity: "L",
+        privileges_required: "N",
+        user_interaction: "N",
+        scope: "U",
+        confidentiality: "H",
+        integrity: "H",
+        availability: "H",
+      }),
+    );
+    if (typeof r === "string") throw new Error(r);
+    expect(r.score).toBe(9.8);
+    expect(r.severity).toBe("critical");
   });
 });

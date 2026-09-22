@@ -23,7 +23,7 @@ declare module "@oh-my-pi/pi-coding-agent" {
     ui: ExtensionUIContext;
     cwd: string;
     hasUI: boolean;
-    sessionManager?: { getSessionFile?: () => string | null };
+    sessionManager?: { getSessionFile?: () => string | undefined };
     setInterval(fn: () => void, ms: number): unknown;
     setTimeout(fn: () => void, ms: number): unknown;
     reload(): void;

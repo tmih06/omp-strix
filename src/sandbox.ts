@@ -159,17 +159,18 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
   // Map the requested cwd into the /workspace mount. Paths outside the
   // mounted root fall back to the mount root.
   const requested = typeof input.cwd === "string" ? input.cwd : sb.workspaceRoot;
-  const innerCwd = requested.startsWith(sb.workspaceRoot)
-    ? join(WORKSPACE, requested.slice(sb.workspaceRoot.length))
-    : WORKSPACE;
-  const b64 = Buffer.from(command, "utf8").toString("base64");
-  // Single-quoted so the host shell never sees the inner operators; the
-  // container's sh decodes and evals the original command verbatim.
-  const wrapped = `cd ${innerCwd} && eval "$(echo ${b64} | base64 -d)"`;
+  const inside = requested === sb.workspaceRoot || requested.startsWith(`${sb.workspaceRoot}/`);
+  const innerCwd = inside ? join(WORKSPACE, requested.slice(sb.workspaceRoot.length)) : WORKSPACE;
+  // The whole inner command (cd + user command) is base64'd, so no quoting
+  // survives into the host shell — apostrophes/spaces in paths are inert.
+  const inner = `cd ${JSON.stringify(innerCwd)} && ${command}`;
+  const b64 = Buffer.from(inner, "utf8").toString("base64");
+  const wrapped = `eval "$(echo ${b64} | base64 -d)"`;
   // If the container is gone, recreate it before exec. This is a sync
   // rewrite so we can't await ensureSandbox; instead we prepend a
   // conditional start that is a no-op when the container is already up.
-  const ensure = `docker start ${NAME} 2>/dev/null || docker run -d --name ${NAME} --cap-add NET_RAW --network host -v '${sb.workspaceRoot}:${WORKSPACE}' -w ${WORKSPACE} ${sandboxImage()} sleep infinity`;
+  // stdout is redirected too — `docker start` echoes the container name.
+  const ensure = `docker start ${NAME} >/dev/null 2>&1 || docker run -d --name ${NAME} --cap-add NET_RAW --network host -v "${sb.workspaceRoot}:${WORKSPACE}" -w ${WORKSPACE} ${sandboxImage()} sleep infinity`;
   const execArgs = ["docker", "exec", NAME, "sh", "-c", `'${wrapped}'`];
 
   const out: Record<string, unknown> = { ...input, command: `${ensure} && ${execArgs.join(" ")}` };

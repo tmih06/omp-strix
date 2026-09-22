@@ -567,6 +567,27 @@ const CVSS_VALID: Record<string, string[]> = {
   availability: ["N", "L", "H"],
 };
 
+/** Tool params use snake_case metric names; cvssBaseScore takes spec keys (AV, AC, …). */
+const CVSS_KEY_MAP: Record<string, string> = {
+  attack_vector: "AV",
+  attack_complexity: "AC",
+  privileges_required: "PR",
+  user_interaction: "UI",
+  scope: "S",
+  confidentiality: "C",
+  integrity: "I",
+  availability: "A",
+};
+
+export function toCvssMetrics(breakdown: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [snake, short] of Object.entries(CVSS_KEY_MAP)) {
+    const v = breakdown[snake];
+    if (typeof v === "string") out[short] = v;
+  }
+  return out;
+}
+
 const REQUIRED_REPORT_FIELDS: Record<string, string> = {
   title: "Title cannot be empty",
   description: "Description cannot be empty",
@@ -865,7 +886,7 @@ If you get a duplicate_of response, do NOT retry — move on to other testing.`,
     errors.push(...idErrors);
     if (errors.length) return json({ success: false, error: "Validation failed", errors });
 
-    const cvss = cvssBaseScore(p.cvss_breakdown as Record<string, string>);
+    const cvss = cvssBaseScore(toCvssMetrics(p.cvss_breakdown as Record<string, unknown>));
     if (typeof cvss === "string") {
       return json({ success: false, error: "Validation failed", errors: [cvss] });
     }
@@ -1000,15 +1021,9 @@ Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS br
     ]) {
       if (!str(p, name).trim()) errors.push(`${name} cannot be empty`);
     }
-    const cve = extractCve(str(p, "cve"));
-    if (!/^CVE-\d{4}-\d{4,}$/.test(cve)) {
-      errors.push(`invalid CVE format: '${cve}' (expected 'CVE-YYYY-NNNNN')`);
-    }
-    let cwe: string | null = null;
-    if (strOrNull(p, "cwe")) {
-      cwe = extractCwe(str(p, "cwe"));
-      if (!/^CWE-\d+$/.test(cwe)) errors.push(`invalid CWE format: '${cwe}' (expected 'CWE-NNN')`);
-    }
+    const { cve, cwe, errors: idErrors } = validateIdentifiers(strOrNull(p, "cve"), strOrNull(p, "cwe"));
+    errors.push(...idErrors);
+    if (!cve) errors.push("cve is required: the advisory's CVE id (expected 'CVE-YYYY-NNNNN')");
     const fixEffort = str(p, "fix_effort").toLowerCase();
     if (!VALID_FIX_EFFORT.has(fixEffort)) {
       errors.push(`Invalid fix_effort: '${fixEffort}'. Must be one of: trivial, low, medium, high`);
@@ -1042,7 +1057,7 @@ Requires the advisory's published CVSS (advisory_cvss) plus a contextual CVSS br
     }
     if (errors.length) return json({ success: false, error: "Validation failed", errors });
 
-    const cvss = cvssBaseScore(p.contextual_cvss_breakdown as Record<string, string>);
+    const cvss = cvssBaseScore(toCvssMetrics(p.contextual_cvss_breakdown as Record<string, unknown>));
     if (typeof cvss === "string") {
       return json({ success: false, error: "Validation failed", errors: [cvss] });
     }
@@ -1168,15 +1183,17 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
       }
     }
     if (p.cvss_breakdown !== undefined) {
-      errors.push(...validateCvssBreakdown(p.cvss_breakdown));
-      if (!errors.length) {
-        const cvss = cvssBaseScore(p.cvss_breakdown as Record<string, string>);
+      const cvssErrors = validateCvssBreakdown(p.cvss_breakdown);
+      errors.push(...cvssErrors);
+      if (!cvssErrors.length) {
+        const cvss = cvssBaseScore(toCvssMetrics(p.cvss_breakdown as Record<string, unknown>));
         if (typeof cvss === "string") {
           errors.push(cvss);
         } else {
           changes.cvss_breakdown = p.cvss_breakdown;
           changes.cvss = cvss.score;
           changes.severity = cvss.severity;
+          changes.cvss_vector = cvss.vector;
         }
       }
     }
@@ -1184,7 +1201,12 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
       const locations = normalizeCodeLocations(p.code_locations);
       if (locations) {
         errors.push(...validateCodeLocations(locations));
-        errors.push(...validateFixVerification(locations, (changes.fix_verification as string) ?? null));
+        errors.push(
+          ...validateFixVerification(
+            locations,
+            (changes.fix_verification as string) ?? (report.fix_verification as string) ?? null,
+          ),
+        );
         changes.code_locations = locations;
       } else {
         errors.push(
@@ -1235,6 +1257,8 @@ This is not deduplication. Use it when new evidence changes the finding — a hi
       meta.contextual_cvss_breakdown = changes.cvss_breakdown;
       meta.contextual_cvss_score = changes.cvss;
       meta.contextual_cvss_reasoning = reasoning.slice(0, MAX_CONTEXTUAL_REASONING);
+      meta.contextual_cvss_vector = (changes.cvss_vector as string) ?? meta.contextual_cvss_vector;
+      delete changes.contextual_cvss_reasoning; // lives inside dependency_metadata, not top-level
       changes.dependency_metadata = meta;
     }
 
@@ -1285,7 +1309,9 @@ Returns each report's id, title, severity, cvss, confidence, finding_class, cve/
       agent_name: r.agent,
       timestamp: r.createdAt,
     }));
-    return json({ success: true, count: reports.length, reports });
+    const bySeverity: Record<string, number> = {};
+    for (const r of reports) bySeverity[String(r.severity)] = (bySeverity[String(r.severity)] ?? 0) + 1;
+    return json({ success: true, count: reports.length, by_severity: bySeverity, reports });
   },
 };
 

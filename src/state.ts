@@ -189,8 +189,9 @@ function newId(prefix: string): string {
   return `${prefix}-${randomBytes(4).toString("hex")}`;
 }
 
-function writeEntry(dir: string, prefix: string, value: unknown): string {
+function writeEntry(dir: string, prefix: string, value: { id: string }): string {
   const id = newId(prefix);
+  value.id = id; // assign BEFORE serialize — the file must carry its own id
   atomicWrite(join(dir, `${id}.json`), JSON.stringify(value, null, 2));
   return id;
 }
@@ -211,7 +212,7 @@ export interface Note {
 export function addNote(dir: string, note: Omit<Note, "id" | "createdAt" | "updatedAt">): Note {
   const now = new Date().toISOString();
   const full: Note = { ...note, id: "", createdAt: now, updatedAt: now };
-  full.id = writeEntry(join(dir, "notes"), "note", full);
+  writeEntry(join(dir, "notes"), "note", full);
   return full;
 }
 
@@ -258,7 +259,7 @@ export function addCoverage(
 ): CoverageEntry {
   const now = new Date().toISOString();
   const full: CoverageEntry = { ...entry, id: "", createdAt: now, updatedAt: now, history: [] };
-  full.id = writeEntry(join(dir, "coverage"), "cov", full);
+  writeEntry(join(dir, "coverage"), "cov", full);
   return full;
 }
 

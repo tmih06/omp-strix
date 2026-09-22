@@ -10,6 +10,7 @@ import {
   listCoverage,
   listReports,
   nextReportId,
+  putCoverage,
   putReport,
 } from "../src/state";
 
@@ -82,8 +83,23 @@ describe("coverage", () => {
 
   test("listCoverage returns entries sorted by createdAt", () => {
     const dir = tmp();
-    addCoverage(dir, { surface: "b", riskArea: "r", outcome: "tested", evidence: "", agent: "a" });
-    addCoverage(dir, { surface: "a", riskArea: "r", outcome: "tested", evidence: "", agent: "a" });
-    expect(listCoverage(dir)).toHaveLength(2);
+    const older = addCoverage(dir, {
+      surface: "b",
+      riskArea: "r",
+      outcome: "tested",
+      evidence: "",
+      agent: "a",
+    });
+    const newer = addCoverage(dir, {
+      surface: "a",
+      riskArea: "r",
+      outcome: "tested",
+      evidence: "",
+      agent: "a",
+    });
+    // Force distinct timestamps so the ordering contract is observable.
+    newer.createdAt = new Date(Date.parse(older.createdAt) + 1000).toISOString();
+    putCoverage(dir, newer);
+    expect(listCoverage(dir).map((e) => e.surface)).toEqual(["b", "a"]);
   });
 });
