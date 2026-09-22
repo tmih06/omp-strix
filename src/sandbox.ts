@@ -46,7 +46,7 @@ export async function dockerAvailable(): Promise<boolean> {
   return res.code === 0;
 }
 
-async function containerRunning(): Promise<boolean> {
+export async function containerRunning(): Promise<boolean> {
   const res = await run(["inspect", "-f", "{{.State.Running}}", NAME]);
   return res.code === 0 && res.stdout.trim() === "true";
 }
@@ -175,24 +175,20 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
   // Other docker commands (start/run/logs) pass through untouched.
   if (/^\s*docker\s/.test(command)) return null;
   // Map the requested cwd into the /workspace mount. Paths outside the
+  // mounted root fall back to the mount root.
   const requested = typeof input.cwd === "string" ? input.cwd : sb.workspaceRoot;
   const inside = requested === sb.workspaceRoot || requested.startsWith(`${sb.workspaceRoot}/`);
   const innerCwd = inside ? join(WORKSPACE, requested.slice(sb.workspaceRoot.length)) : WORKSPACE;
-  // The whole inner command (cd + user command) is base64'd, so no quoting
-  // survives into the host shell — apostrophes/spaces in paths are inert.
-  const inner = `cd ${JSON.stringify(innerCwd)} && ${command}`;
-  const b64 = Buffer.from(inner, "utf8").toString("base64");
+  // Single-quote the inner command: the original stays readable in the
+  // transcript (no base64). Apostrophes become the standard '\'' sequence.
   // umask 000: the container runs as root, so files it writes into the
   // /workspace mount must be world-writable for the host user to touch them.
-  const wrapped = `umask 000; eval "$(echo ${b64} | base64 -d)"`;
-  // If the container is gone, recreate it before exec. This is a sync
-  // rewrite so we can't await ensureSandbox; instead we prepend a
-  // conditional start that is a no-op when the container is already up.
-  // stdout is redirected too — `docker start` echoes the container name.
-  const ensure = `docker start ${NAME} >/dev/null 2>&1 || docker run -d --name ${NAME} --cap-add NET_RAW --network host -e TMPDIR=${WORKSPACE}/.tmp -v "${sb.workspaceRoot}:${WORKSPACE}" -w ${WORKSPACE} ${sandboxImage()} sh -c 'umask 000; mkdir -p ${WORKSPACE}/.tmp; exec sleep infinity'`;
-  const execArgs = ["docker", "exec", NAME, "sh", "-c", `'${wrapped}'`];
-
-  const out: Record<string, unknown> = { ...input, command: `${ensure} && ${execArgs.join(" ")}` };
+  const inner = `umask 000; cd ${JSON.stringify(innerCwd)} && ${command}`;
+  const quoted = `'${inner.replace(/'/g, `'\\''`)}'`;
+  const out: Record<string, unknown> = {
+    ...input,
+    command: `docker exec ${NAME} sh -c ${quoted}`,
+  };
   delete out.cwd; // key must be absent, not undefined — schema rejects undefined
   return out;
 }

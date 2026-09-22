@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { buildSystemPrompt } from "./prompt";
 import {
+  containerRunning,
   dockerAvailable,
   ensureSandbox,
   markSandboxActive,
@@ -428,6 +429,12 @@ export default function (pi: ExtensionAPI) {
     })();
     const err = await strix.sandboxStarting;
     if (err) return; // sandbox unavailable — run unsandboxed
+    // The container can die mid-scan (OOM, manual rm, a subagent's own
+    // docker call). Recreate it so the rewrite never targets a dead name.
+    if (!(await containerRunning())) {
+      const restartErr = await ensureSandbox(process.cwd());
+      if (restartErr) return;
+    }
     const rewritten = rewriteBashInput(event.input as Record<string, unknown>);
     if (rewritten) return { input: rewritten };
   });
