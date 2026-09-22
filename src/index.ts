@@ -42,6 +42,13 @@ interface StrixState {
   sandboxStarting: Promise<string | null> | null;
   /** Whether bash is routed into the container this activation. */
   sandboxEnabled: boolean;
+  /**
+   * Session id that ran /strix. Subagent sessions get their own
+   * ExtensionRunner and emit session_start/before_agent_start/session_shutdown
+   * on the shared module state — without this guard a subagent's shutdown
+   * would end the scan and kill the sandbox mid-run.
+   */
+  ownerSessionId: string | null;
 }
 
 const strix: StrixState = {
@@ -51,7 +58,18 @@ const strix: StrixState = {
   scanStarted: false,
   sandboxStarting: null,
   sandboxEnabled: true,
+  ownerSessionId: null,
 };
+
+/** Session id of the ctx that emitted this event, or null when unknown. */
+function eventSessionId(ctx: unknown): string | null {
+  const sm = (ctx as { sessionManager?: { getSessionId?: () => string } } | undefined)?.sessionManager;
+  try {
+    return sm?.getSessionId?.() ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ── Status-line takeover ───────────────────────────────────────────────────
 // The extension API cannot touch built-in status-line segments: `setStatus`
@@ -279,6 +297,7 @@ async function deactivate(
   strix.sandboxEnabled = true;
   strix.systemPrompt = null;
   strix.scanStarted = false;
+  strix.ownerSessionId = null;
   endScan();
   try {
     (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", "");
@@ -331,6 +350,7 @@ export default function (pi: ExtensionAPI) {
       // instead of sleeping until subagent completions arrive.
       await pi.setActiveTools([...preTools.filter((t) => t !== "goal"), ...TOOL_NAMES]);
       strix.active = true;
+      strix.ownerSessionId = eventSessionId(ctx);
 
       const themeResult = await ctx.ui.setTheme("strix-red");
       if (!themeResult.success) {
@@ -357,8 +377,11 @@ export default function (pi: ExtensionAPI) {
 
   // While strix mode is on, replace the system prompt with the strix one.
   // The first prompt after activation is captured as the scan target.
-  pi.on("before_agent_start", async (event) => {
+  pi.on("before_agent_start", async (event, ctx) => {
+    // Only the owning session gets the strix prompt — subagent sessions emit
+    // this event on their own runner and must keep their agent-def prompt.
     if (!strix.active || !strix.systemPrompt) return;
+    if (strix.ownerSessionId && eventSessionId(ctx) !== strix.ownerSessionId) return;
     if (!strix.scanStarted) {
       strix.scanStarted = true;
       const target = event.prompt?.trim() || "unspecified";
@@ -427,7 +450,10 @@ export default function (pi: ExtensionAPI) {
     recordSubagentUsage(d.usage, typeof d.totalDurationMs === "number" ? d.totalDurationMs : 0, runs);
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event, ctx) => {
+    // Subagent sessions emit this on their own runner — only the session
+    // that ran /strix may tear the scan down.
+    if (strix.ownerSessionId && eventSessionId(ctx) !== strix.ownerSessionId) return;
     if (strix.active || activeScan()) {
       strix.active = false;
       strix.scanStarted = false;
