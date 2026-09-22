@@ -169,7 +169,7 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
   // If the container is gone, recreate it before exec. This is a sync
   // rewrite so we can't await ensureSandbox; instead we prepend a
   // conditional start that is a no-op when the container is already up.
-  const ensure = `docker start ${NAME} 2>/dev/null || docker run -d --name ${NAME} -v '${sb.workspaceRoot}:${WORKSPACE}' ${sandboxImage()} sleep infinity`;
+  const ensure = `docker start ${NAME} 2>/dev/null || docker run -d --name ${NAME} --cap-add NET_RAW --network host -v '${sb.workspaceRoot}:${WORKSPACE}' -w ${WORKSPACE} ${sandboxImage()} sleep infinity`;
   const execArgs = ["docker", "exec", NAME, "sh", "-c", `'${wrapped}'`];
 
   const out: Record<string, unknown> = { ...input, command: `${ensure} && ${execArgs.join(" ")}` };

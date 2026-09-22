@@ -50,13 +50,17 @@ const strix: StrixState = {
   sandboxStarting: null,
 };
 
-// ── Status-line segment hiding ─────────────────────────────────────────────
+// ── Status-line takeover ───────────────────────────────────────────────────
 // The extension API cannot touch built-in status-line segments: `setStatus`
-// only appends hook-status lines below the bar, and `setFooter`/`setHeader`
-// are no-op stubs in interactive mode. Segments are driven by the
-// `statusLine.*` settings, so we hide `path`/`git`/`pr` (cwd + branch leak
-// local topology in screenshots) via runtime-only `settings.override()` —
-// nothing is persisted to the user's config.
+// only appends hook-status LINES BELOW the bar (that's why "◆ STRIX" was
+// showing under the input field), and `setFooter`/`setHeader` are no-op stubs
+// in interactive mode. Segments are driven by the `statusLine.*` settings, so
+// while strix mode is on we:
+//   - drop `path`/`git`/`pr` (cwd + branch leak local topology in screenshots)
+//   - inject the built-in `status` segment so our hook-status text ("◆ STRIX")
+//     renders INSIDE the bar instead of as a line under it
+//   - set `showHookStatus: false` so the same text isn't duplicated below
+// All via runtime-only `settings.override()` — nothing persisted to config.
 //
 // Two wrinkles:
 //  1. `leftSegments`/`rightSegments` only take effect under preset "custom",
@@ -149,16 +153,16 @@ const STATUS_LINE_PRESET_SEGMENTS: Record<
     segmentOptions: {},
   },
 };
-
 const STATUS_LINE_OVERRIDE_KEYS = [
   "statusLine.preset",
   "statusLine.leftSegments",
   "statusLine.rightSegments",
   "statusLine.separator",
   "statusLine.segmentOptions",
+  "statusLine.showHookStatus",
 ] as const;
 
-let statusLineHidden = false;
+let statusLineTaken = false;
 
 function liveSettings(pi: ExtensionAPI): SettingsLike | null {
   try {
@@ -181,9 +185,9 @@ function resyncStatusLine(s: SettingsLike): void {
   s.override("statusLine.sessionAccent", accent);
 }
 
-function hidePathGitSegments(pi: ExtensionAPI): void {
+function applyStrixStatusLine(pi: ExtensionAPI): void {
   const s = liveSettings(pi);
-  if (!s || statusLineHidden) return;
+  if (!s || statusLineTaken) return;
   const preset = String(s.get("statusLine.preset") ?? "default");
   const def = STATUS_LINE_PRESET_SEGMENTS[preset] ?? STATUS_LINE_PRESET_SEGMENTS.default;
   const custom = preset === "custom";
@@ -194,20 +198,31 @@ function hidePathGitSegments(pi: ExtensionAPI): void {
     ...(def.segmentOptions ?? {}),
     ...((s.get("statusLine.segmentOptions") as Record<string, unknown> | undefined) ?? {}),
   };
+  const newLeft = left.filter((id) => !HIDDEN_SEGMENTS.has(id));
+  // Inject the built-in `status` segment so setStatus text renders inside the
+  // bar — right after `mode` when present, else at the front.
+  if (!newLeft.includes("status") && !right.includes("status")) {
+    const at = newLeft.indexOf("mode");
+    newLeft.splice(at >= 0 ? at + 1 : 0, 0, "status");
+  }
   s.override("statusLine.preset", "custom");
-  s.override("statusLine.leftSegments", left.filter((id) => !HIDDEN_SEGMENTS.has(id)));
+  s.override("statusLine.leftSegments", newLeft);
   s.override("statusLine.rightSegments", right.filter((id) => !HIDDEN_SEGMENTS.has(id)));
   s.override("statusLine.separator", separator);
   s.override("statusLine.segmentOptions", segmentOptions);
-  statusLineHidden = true;
+  // Suppress the below-bar hook-status lines so "◆ STRIX" isn't duplicated
+  // under the input field. Side effect: other plugins' hook statuses are
+  // hidden too while strix mode is on.
+  s.override("statusLine.showHookStatus", false);
+  statusLineTaken = true;
   resyncStatusLine(s);
 }
 
-function restoreStatusLineSegments(pi: ExtensionAPI): void {
+function restoreStatusLine(pi: ExtensionAPI): void {
   const s = liveSettings(pi);
-  if (!s || !statusLineHidden) return;
+  if (!s || !statusLineTaken) return;
   for (const key of STATUS_LINE_OVERRIDE_KEYS) s.clearOverride(key);
-  statusLineHidden = false;
+  statusLineTaken = false;
   resyncStatusLine(s);
 }
 
@@ -227,7 +242,7 @@ function installTheme(): void {
 
 async function deactivate(pi: ExtensionAPI, ctx: { ui: { notify(m: string, l?: string): void } }): Promise<void> {
   strix.active = false;
-  restoreStatusLineSegments(pi);
+  restoreStatusLine(pi);
   strix.systemPrompt = null;
   strix.scanStarted = false;
   strix.sandboxStarting = null;
@@ -269,7 +284,7 @@ export default function (pi: ExtensionAPI) {
       pi.setSessionName("strix");
       ctx.ui.setWorkingMessage("Scanning…");
       ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
-      hidePathGitSegments(pi);
+      applyStrixStatusLine(pi);
       ctx.ui.notify(
         "Strix mode on. Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit.",
         "info",
