@@ -70,13 +70,14 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
   await run(["rm", "-f", NAME]); // stale or wrong-mount container: recreate
 
   const image = sandboxImage();
-  const inspect = await run(["image", "inspect", image]);
-  if (inspect.code !== 0) {
-    // Pull first — the default image is prebuilt on GHCR. Fall back to a
-    // local build only when the pull fails AND a Dockerfile is present
-    // (source checkout / offline dev).
-    const pull = await run(["pull", image]);
-    if (pull.code !== 0) {
+  // Always try to pull — when the local image is current this is a cheap
+  // manifest check (~1s); when GHCR has a newer :latest it updates. If the
+  // pull fails (offline, auth) fall back to whatever is already local, and
+  // only when nothing is local AND a Dockerfile exists, build from source.
+  const pull = await run(["pull", image]);
+  if (pull.code !== 0) {
+    const inspect = await run(["image", "inspect", image]);
+    if (inspect.code !== 0) {
       if (!existsSync(join(DOCKERFILE_DIR, "Dockerfile"))) {
         return `docker pull ${image} failed: ${pull.stderr.trim() || pull.stdout.trim()}`;
       }
@@ -85,6 +86,7 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
         return `docker build ${image} failed: ${build.stderr.trim() || build.stdout.trim()}`;
       }
     }
+    // else: pull failed but a local image exists — use it (offline/stale ok).
   }
 
   const res = await run([
