@@ -101,6 +101,8 @@ FROM golang:bookworm AS gobuild
 ARG TARGETARCH
 ENV CGO_ENABLED=0 GOOS=linux GOBIN=/out
 
+SHELL ["/bin/bash", "-c"]
+
 RUN set -euo pipefail; \
     export GOARCH="${TARGETARCH:-$(dpkg --print-architecture)}"; \
     mkdir -p /out; \
