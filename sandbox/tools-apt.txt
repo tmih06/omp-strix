@@ -34,8 +34,6 @@ patator
 # --- credentials / cracking ---
 hydra
 john
-hashcat
-pocl-opencl-icd
 
 # --- SMB / Windows / AD ---
 smbmap

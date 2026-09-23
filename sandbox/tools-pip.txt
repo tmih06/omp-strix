@@ -8,10 +8,8 @@ wafw00f
 arjun
 uro
 
-# --- SAST / cloud / IaC auditing ---
+# --- SAST ---
 semgrep
-prowler
-checkov
 
 # --- SMB / AD ---
 # netexec and enum4linux-ng are not published to PyPI — install from git.
