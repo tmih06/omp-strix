@@ -7,7 +7,11 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -72,13 +76,14 @@ jobs:
         run: |
           docker run --rm omp-strix-sandbox:ci sh -c '
             set -e
-            for t in nmap masscan rustscan sqlmap dirsearch gobuster ffuf nikto hydra john hashcat \
+            for t in nmap masscan rustscan sqlmap dirsearch gobuster ffuf nikto hydra john \
+                     medusa ncrack patator wfuzz searchsploit enum4linux \
                      httpx wafw00f arjun uro nuclei subfinder katana naabu dnsx uncover amass \
                      interactsh-client semgrep sg ast-grep trivy gitleaks trufflehog hurl \
-                     prowler checkov wpscan radare2 binwalk onesixtyone arp-scan nbtscan pwn ropper \
-                     gau waybackurls anew qsreplace unfurl hakrawler assetfinder x8 \
+                     wpscan binwalk steghide exiftool foremost onesixtyone arp-scan nbtscan pwn ropper \
+                     gau waybackurls anew qsreplace unfurl hakrawler assetfinder \
                      nxc enum4linux-ng smbmap jwt_tool paramspider dalfox feroxbuster kxss \
-                     python3 pip3 git jq curl wget openssl socat; do
+                     python3 git jq curl wget openssl socat; do
               command -v $t >/dev/null || { echo "MISSING: $t"; exit 1; }
             done
             command -v secretsdump.py >/dev/null || command -v impacket-secretsdump >/dev/null \
