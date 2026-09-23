@@ -28,6 +28,7 @@ ARG HURL_VER=8.0.1
 ARG AMASS_VER=5.1.1
 ARG DALFOX_VER=3.2.3
 ARG X8_VER=4.3.0
+ARG RUSTSCAN_VER=2.4.1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl unzip binutils \
@@ -82,6 +83,13 @@ RUN set -euo pipefail; \
     # hurl: official .deb (installed in the final stage so apt resolves libcurl).
     dl "/debs/hurl_${HURL_VER}_${HURL}.deb" "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VER}/hurl_${HURL_VER}_${HURL}.deb"; \
     \
+    # rustscan: upstream ships amd64 .deb only — warn-and-continue on arm64.
+    if [ "$ARCH" = "amd64" ]; then \
+      dl "/debs/rustscan_${RUSTSCAN_VER}_amd64.deb" "https://github.com/bee-san/RustScan/releases/download/${RUSTSCAN_VER}/rustscan_${RUSTSCAN_VER}_amd64.deb"; \
+    else \
+      echo "::warning::rustscan has no linux/arm64 .deb — skipping" >&2; \
+    fi; \
+    \
     # x8: upstream ships linux amd64 only — warn-and-continue on arm64.
     if [ "$X8" = "1" ]; then \
       dl /tmp/x8.gz "https://github.com/Sh1Yo/x8/releases/download/v${X8_VER}/x86_64-linux-x8.gz"; \
@@ -130,32 +138,67 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
+# Stage 4: pipbuild — Python tools in a venv, built with a full toolchain.
+# Some deps (aardwolf, netifaces) need rustc/gcc — keep them out of the
+# final image by building here and copying the venv.
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS pipbuild
+
+ENV PIP_BREAK_SYSTEM_PACKAGES=1 PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3 python3-pip python3-venv python3-dev \
+       build-essential pkg-config libffi-dev libssl-dev git curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# aardwolf (NetExec dep) needs rustc >=1.74; bookworm ships 1.63 — use rustup.
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:$PATH"
+
+COPY tools-pip.txt /tmp/
+RUN python3 -m venv /opt/venv \
+    && grep -v '^\s*#' /tmp/tools-pip.txt | grep -v '^\s*$' > /tmp/pip.list \
+    && xargs -a /tmp/pip.list -n 1 /opt/venv/bin/pip3 install \
+    && rm -f /tmp/pip.list /tmp/tools-pip.txt
+
+# ---------------------------------------------------------------------------
 # Final image
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_BREAK_SYSTEM_PACKAGES=1 \
-    PIP_NO_CACHE_DIR=1
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Manifest-driven install: comments/blank lines stripped, one layer each.
-# apt runs first because tools-pip.txt contains git+https URLs (needs git).
-COPY tools-apt.txt tools-pip.txt /tmp/
+# Manifest-driven apt install: comments/blank lines stripped, one layer.
+COPY tools-apt.txt /tmp/
 COPY --from=fetch /debs/ /tmp/debs/
 RUN grep -v '^\s*#' /tmp/tools-apt.txt | grep -v '^\s*$' | tr '\n' ' ' > /tmp/apt.list \
     && apt-get update \
     && xargs -a /tmp/apt.list apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends /tmp/debs/*.deb \
-    && rm -rf /var/lib/apt/lists/* /tmp/debs \
-    && grep -v '^\s*#' /tmp/tools-pip.txt | grep -v '^\s*$' | tr '\n' ' ' > /tmp/pip.list \
-    && xargs -a /tmp/pip.list pip3 install \
-    && rm -f /tmp/apt.list /tmp/pip.list /tmp/tools-*.txt
+    && rm -rf /var/lib/apt/lists/* /tmp/debs /tmp/apt.list /tmp/tools-apt.txt
+
+# Python tools come from the pipbuild venv — no pip in the final image.
+COPY --from=pipbuild /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # jwt_tool is a single-script repo (no packaging): clone + wrapper.
 RUN git clone --depth 1 https://github.com/ticarpi/jwt_tool /opt/jwt_tool \
     && pip3 install -r /opt/jwt_tool/requirements.txt \
     && printf '#!/bin/sh\nexec python3 /opt/jwt_tool/jwt_tool.py "$@"\n' > /usr/local/bin/jwt_tool \
     && chmod +x /usr/local/bin/jwt_tool
+
+# Tools not packaged in Debian bookworm — shallow clones + wrappers.
+# nikto (perl), enum4linux (perl), exploitdb (searchsploit + CSV db).
+RUN git clone --depth 1 https://github.com/sullo/nikto /opt/nikto \
+    && printf '#!/bin/sh\nexec perl /opt/nikto/program/nikto.pl "$@"\n' > /usr/local/bin/nikto \
+    && chmod +x /usr/local/bin/nikto \
+    && git clone --depth 1 https://github.com/CiscoCXSecurity/enum4linux /opt/enum4linux \
+    && printf '#!/bin/sh\nexec perl /opt/enum4linux/enum4linux.pl "$@"\n' > /usr/local/bin/enum4linux \
+    && chmod +x /usr/local/bin/enum4linux \
+    && git clone --depth 1 https://gitlab.com/exploit-database/exploitdb /opt/exploitdb \
+    && ln -sf /opt/exploitdb/searchsploit /usr/local/bin/searchsploit \
+    && printf 'files_array[0]="/opt/exploitdb/files_exploits.csv"\npath_array[0]="/opt/exploitdb"\ngitpath="/opt/exploitdb"\n' > /etc/searchsploit.rc
 
 # Wordlists (SecLists subsets) for gobuster/feroxbuster/ffuf.
 RUN mkdir -p /opt/wordlists /usr/share/wordlists/dirb /usr/share/wordlists/dns; \

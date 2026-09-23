@@ -6,7 +6,6 @@
 # --- network / recon ---
 nmap
 masscan
-rustscan
 dnsutils
 whois
 iputils-ping
@@ -26,7 +25,6 @@ wget
 gobuster
 dirsearch
 ffuf
-nikto
 wfuzz
 sqlmap
 medusa
@@ -38,14 +36,11 @@ hydra
 john
 hashcat
 pocl-opencl-icd
-exploitdb
 
 # --- SMB / Windows / AD ---
-enum4linux
 smbmap
 
 # --- binary analysis / forensics ---
-radare2
 binwalk
 steghide
 libimage-exiftool-perl
