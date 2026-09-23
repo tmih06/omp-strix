@@ -1,0 +1,3 @@
+# Force LF line endings on checkout — biome lint expects LF and Windows
+# git defaults to CRLF, which makes every file "unformatted" on win CI.
+* text=auto eol=lf
