@@ -83,11 +83,16 @@ RUN set -euo pipefail; \
     # hurl: official .deb (installed in the final stage so apt resolves libcurl).
     dl "/debs/hurl_${HURL_VER}_${HURL}.deb" "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VER}/hurl_${HURL_VER}_${HURL}.deb"; \
     \
-    # rustscan: upstream ships amd64 .deb only — warn-and-continue on arm64.
+    # rustscan: amd64 ships a .deb (installed in final stage); arm64 ships a
+    # zipped binary — install it directly into /out.
     if [ "$ARCH" = "amd64" ]; then \
-      dl "/debs/rustscan_${RUSTSCAN_VER}_amd64.deb" "https://github.com/bee-san/RustScan/releases/download/${RUSTSCAN_VER}/rustscan_${RUSTSCAN_VER}_amd64.deb"; \
+      dl /tmp/rustscan.zip "https://github.com/bee-san/RustScan/releases/download/${RUSTSCAN_VER}/rustscan.deb.zip"; \
+      unzip -o /tmp/rustscan.zip -d /tmp/rustscan; \
+      cp /tmp/rustscan/*.deb "/debs/rustscan_${RUSTSCAN_VER}_amd64.deb"; \
     else \
-      echo "::warning::rustscan has no linux/arm64 .deb — skipping" >&2; \
+      dl /tmp/rustscan.zip "https://github.com/bee-san/RustScan/releases/download/${RUSTSCAN_VER}/aarch64-linux-rustscan.zip"; \
+      unzip -o -j /tmp/rustscan.zip -d /tmp/rustscan; \
+      install -m755 "$(find /tmp/rustscan -name 'rustscan*' -type f | head -1)" /out/rustscan; \
     fi; \
     \
     # x8: upstream ships linux amd64 only — warn-and-continue on arm64.
