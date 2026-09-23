@@ -40,6 +40,9 @@ let projectDir = process.cwd();
 export function setProjectDir(dir: string): void {
   projectDir = dir;
 }
+export function getProjectDir(): string {
+  return projectDir;
+}
 const strixRoot = () => join(projectDir, "strix");
 const activeFile = () => join(strixRoot(), "active.json");
 const scansDir = () => join(strixRoot(), "scans");

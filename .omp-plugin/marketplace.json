@@ -12,7 +12,7 @@
     {
       "name": "omp-strix",
       "description": "Strix adversarial security-testing mode \u2014 /strix toggles a full multi-agent pentest workflow",
-      "version": "0.1.25",
+      "version": "0.1.26",
       "source": {
         "source": "github",
         "repo": "tmih06/omp-strix",

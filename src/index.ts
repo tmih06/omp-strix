@@ -33,6 +33,7 @@ import {
   beginScan,
   collectSubagentMetrics,
   endScan,
+  getProjectDir,
   resumableScan,
   setProjectDir,
 } from "./state";
@@ -518,12 +519,14 @@ export default function (pi: ExtensionAPI) {
       if (rewritten) return { input: rewritten };
       return;
     }
-    if (!activeScan()) return; // no scan yet — nothing to sandbox against
     strix.sandboxStarting ??= (async () => {
       if (!(await dockerAvailable())) return "docker not available";
-      const err = await ensureSandbox(process.cwd());
+      // Mount the session's project dir (ctx.cwd captured at activation),
+      // not process.cwd() — the agent process runs from ~/.omp/agent.
+      const root = getProjectDir();
+      const err = await ensureSandbox(root);
       if (!err) {
-        recordSandbox(process.cwd());
+        recordSandbox(root);
         markSandboxActive(true);
       }
       return err;
@@ -533,7 +536,7 @@ export default function (pi: ExtensionAPI) {
     // The container can die mid-scan (OOM, manual rm, a subagent's own
     // docker call). Recreate it so the tool never execs into a dead name.
     if (!(await containerRunning())) {
-      const restartErr = await ensureSandbox(process.cwd());
+      const restartErr = await ensureSandbox(getProjectDir());
       if (restartErr) return;
     }
     // Only direct `docker exec` calls need rewriting (umask injection);
