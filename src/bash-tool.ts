@@ -13,7 +13,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { activeSandbox, ensureSandboxRunning, WORKSPACE } from "./sandbox";
+import { activeSandbox, ensureSandboxRunning, sandboxRoot, WORKSPACE } from "./sandbox";
 import { activeScan, scanDir } from "./state";
 
 type Json = Record<string, unknown>;
@@ -338,6 +338,8 @@ const INSTALL_HINTS: Record<string, string> = {
   wpscan: "apt-get install -y wpscan || gem install wpscan",
   amass: "apt-get install -y amass || go install github.com/owasp-amass/amass/v4/...@latest",
   x8: "cargo install x8 || download from github.com/Sh1Yo/x8/releases",
+  tempmail:
+    'baked into the sandbox image at /usr/local/bin/tempmail — if missing, the image is stale or this ran on the host; use `python3 /workspace/strix/tools/tempmail.py` when the workspace is the omp-strix repo, else load_skill("tempmail") for the embedded source',
 };
 
 function missingToolHint(output: string): string | null {
@@ -688,7 +690,11 @@ export function strixBash(pi: ExtensionAPI) {
       // Host path: no sandbox, or the agent deliberately issued a docker command.
       const res = await run(["bash", "-c", command], { cwd, timeoutS, signal });
       const bounded = boundOutput(res.output, res.timedOut, timeoutS);
-      const warn = startErr ? `[strix] sandbox unavailable (${startErr}) — ran on host.\n` : "";
+      const warn = startErr
+        ? `[strix] sandbox unavailable (${startErr}) — ran on host.\n`
+        : sandboxRoot()
+          ? "[strix] sandbox armed but not recorded — ran on host. Report this.\n"
+          : "";
       const hint =
         res.code !== 0
           ? (missingToolHint(res.output) ?? classifyToolError(res.output, res.code, res.timedOut))

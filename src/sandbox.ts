@@ -381,12 +381,17 @@ export function ensureSandboxRunning(onProgress?: (msg: string) => void): Promis
 
 export function markSandboxActive(on: boolean): void {
   try {
-    const active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
+    let active: Record<string, unknown> = {};
+    try {
+      active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
+    } catch {
+      /* file missing — create it below */
+    }
     active.sandbox = on;
     mkdirSync(STATE_DIR, { recursive: true });
     writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
   } catch {
-    /* no active scan file yet */
+    /* state dir unwritable */
   }
 }
 
@@ -409,12 +414,18 @@ export function activeSandbox(): ActiveSandbox | null {
 
 export function recordSandbox(workspaceRoot: string): void {
   try {
-    const active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
+    let active: Record<string, unknown> = {};
+    try {
+      active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
+    } catch {
+      /* file missing — create it below */
+    }
     active.sandbox = true;
     active.workspaceRoot = workspaceRoot;
+    mkdirSync(STATE_DIR, { recursive: true });
     writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
   } catch {
-    /* no active scan file yet */
+    /* state dir unwritable */
   }
 }
 
