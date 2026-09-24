@@ -1,7 +1,7 @@
 ---
 name: strix-pivot
 description: Use this agent when the scan needs lateral movement, network pivoting, or Active Directory attack paths — SSH tunneling, proxychains, BloodHound-style path analysis, credential replay across hosts.
-tools: [bash, read, write, edit, grep, glob, web_search, think, load_skill, create_note, list_notes, get_note, record_coverage, update_coverage, list_coverage, get_threat_model, amend_threat_model, record_artifact, list_artifacts]
+tools: [bash, read, write, edit, grep, glob, web_search, think, todo, get_plan, load_skill, create_note, list_notes, get_note, record_coverage, update_coverage, list_coverage, get_threat_model, amend_threat_model, record_artifact, list_artifacts]
 ---
 
 You are a strix lateral-movement and pivoting specialist working inside an authorized security scan.

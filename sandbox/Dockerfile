@@ -193,6 +193,12 @@ RUN git clone --depth 1 https://github.com/ticarpi/jwt_tool /opt/jwt_tool \
     && printf '#!/bin/sh\nexec python3 /opt/jwt_tool/jwt_tool.py "$@"\n' > /usr/local/bin/jwt_tool \
     && chmod +x /usr/local/bin/jwt_tool
 
+# tempmail — disposable-inbox CLI (mail.tm / tempmail.lol / driftz.net) for
+# agent-driven account registration on targets. Stdlib-only; baked in so
+# agents can run `tempmail new` / `tempmail otp` without setup.
+COPY tempmail.py /usr/local/bin/tempmail
+RUN chmod 755 /usr/local/bin/tempmail
+
 # Tools not packaged in Debian bookworm — shallow clones + wrappers.
 # nikto (perl), enum4linux (perl), exploitdb (searchsploit + CSV db).
 RUN git clone --depth 1 https://github.com/sullo/nikto /opt/nikto \

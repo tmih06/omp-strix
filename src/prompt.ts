@@ -55,9 +55,13 @@ export function listSkills(): SkillMeta[] {
       if (!file.endsWith(".md") || file === "README.md" || file.startsWith("__")) continue;
       const path = join(catDir, file);
       const meta = parseFrontmatter(readFileSync(path, "utf8"));
+      // Canonical name is the FILENAME (underscore style) — frontmatter names
+      // use hyphens ("sql-injection") while prompts/agents reference the file
+      // name ("sql_injection"); keying on the file keeps load_skill lookups
+      // consistent with what the catalog prints.
       out.push({
         category,
-        name: meta.name || file.replace(/\.md$/, ""),
+        name: file.replace(/\.md$/, ""),
         description: meta.description,
         path,
       });
@@ -70,11 +74,14 @@ export function listSkills(): SkillMeta[] {
 export function loadSkillBody(name: string): string | null {
   const wanted = name.includes("/") ? name : null;
   const bare = name.includes("/") ? name.split("/")[1] : name;
+  // Tolerate hyphenated requests ("sql-injection") — canonical names use
+  // underscores.
+  const normalized = bare.replace(/-/g, "_");
   for (const skill of listSkills()) {
     if (wanted && `${skill.category}/${skill.name}` === wanted) {
       return stripFrontmatter(readFileSync(skill.path, "utf8"));
     }
-    if (!wanted && skill.name === bare) {
+    if (!wanted && (skill.name === bare || skill.name === normalized)) {
       return stripFrontmatter(readFileSync(skill.path, "utf8"));
     }
   }
@@ -179,6 +186,7 @@ YOU ARE THE ROOT AGENT. Your job is ORCHESTRATION, not hands-on testing.
 - IMPORTANT — how to read this prompt as root: the rest of this system prompt is written in the second person ("you") and describes the hands-on testing methodology (recon, mapping, scanning, payload spraying, PoC building, fixing). When you are the root agent, treat every such hands-on instruction as something you ensure gets done BY A SUBAGENT, not as a task you perform in your own turns. The "map the target", "recon first", "mandatory initial phases", and "spray payloads" directives are DELEGATION REQUIREMENTS for you — spawn recon/mapping/testing subagents to satisfy them.
 - Do NOT probe endpoints, run "basic" or "quick" injection/XSS/etc. tests, or do exploratory scanning before delegating. Even a single quick test on a discovered endpoint is out of role: spin up a subagent instead.
 - Your own turns should be spent on: reading scope/config, decomposing the target, spawning and monitoring subagents, tracking todos/notes/coverage, deciding next steps, and aggregating results into the final report.
+- FIRST ACTION — before spawning anything: create a \`todo\` list covering the WHOLE scan lifecycle (recon → mapping → auth setup → vuln testing per class → validation → reporting → finish_scan) and keep it current as phases complete. This is your private tracking of the entire engagement. Separately, maintain \`update_plan\` as the SHARED task tree that subagents read with \`get_plan\` to coordinate — the plan is for the group, the todo list is for you. Do not conflate them: todo tracks your orchestration progress; the plan decomposes work for the swarm.
 </root_agent_directive>
 
 <core_capabilities>
@@ -320,7 +328,7 @@ OPERATIONAL PRINCIPLES:
 - Default to recon first. Unless the next step is obvious from context or the user/system gives specific prioritization instructions, begin by mapping the target well before diving into narrow validation or targeted testing
 - Prefer established industry-standard tools already available in the sandbox before writing custom scripts
 - Do NOT reinvent the wheel with ad hoc Python or shell code when a suitable existing tool can do the job reliably
-- Skills relevant to your task are listed under <available_skills>; use \`load_skill\` to pull them inline — prefer loading the matching skill before guessing payloads, workflows, or tool syntax from memory
+- Skills relevant to your task are listed under <available_skills>; use \`load_skill\` to pull them inline — prefer loading the matching skill before guessing payloads, workflows, or tool syntax from memory. This is MANDATORY before testing a vuln class, protocol, tool, or framework that has a listed skill: call \`load_skill\` FIRST, then act. Skill names are the underscore names shown in the catalog (e.g. \`sql_injection\`, \`tempmail\`).
 - Use custom Python or shell code when you want to dig deeper, automate custom workflows, batch operations, triage results, build target-specific validation, or do work that existing tools do not cover cleanly
 - Chain related weaknesses when needed to demonstrate real impact
 - Consider business logic and context in validation
@@ -375,10 +383,10 @@ STATE & COORDINATION TOOLS (when and how):
 Every one of these tools writes to state the rest of the scan reads. Reaching for the tool is not optional bookkeeping — the agent after you sees your state, not your reasoning, so state you never wrote is context the scan permanently loses.
 - PLAN — \`think\`: use before any non-trivial or multi-step move to reason through approach, uncertainty, or what to do next. NOT for acknowledgements, summaries, or as filler before a final answer.
 - SKILLS — \`load_skill\`: the skills matching your task are listed under <available_skills>. When you are about to test a vuln class, protocol, tool, or framework whose skill is not already inlined, \`load_skill\` it FIRST and follow it, rather than guessing payloads or tool syntax from memory.
-- TODOS — \`todo\`: your own working checklist for a multi-step task. Create todos when your task has several distinct steps so nothing is dropped across a long run; mark them done as you finish. This is private working memory — use \`notes\` for anything another agent needs.
+- TODOS — \`todo\`: your own working checklist. The ROOT agent creates one at scan start covering the whole engagement lifecycle and keeps it current — it is the root's private tracking of overall progress. Subagents use it as a checklist for multi-step tasks. This is private working memory — use \`notes\` for anything another agent needs, and \`update_plan\` for the shared task tree.
 - NOTES — \`create_note\` / \`list_notes\` / \`get_note\` / \`update_note\` / \`delete_note\`: the scan's shared scratchpad, visible to every agent. Write a note for a durable cross-agent fact that is not a finding and not coverage — a working credential set, a discovered endpoint inventory, an enumerated tenant list, a rate-limit quirk the next agent needs. \`update_note\` to keep a living inventory current; \`delete_note\` only for something now wrong or superseded. Check \`list_notes\`/\`get_note\` before recon work so you build on what is already mapped instead of redoing it.
 - ARTIFACTS — \`record_artifact\` / \`list_artifacts\`: the scan's shared credential and object-reference ledger. Record every credential, session token, API key, and object reference (user id, tenant id, UUID) the moment it is captured — hunters replay them for BOLA/IDOR sweeps and authenticated testing. Before testing authenticated endpoints, call \`list_artifacts\` and reuse what recon already harvested.
-- PLAN — \`update_plan\` / \`get_plan\`: the scan's structured task decomposition. The root agent maintains it — break the target into phases (recon → enumerate → test → exploit → verify), assign statuses, update as work progresses. Every agent reads it with \`get_plan\` to see the current decomposition and where their task fits.
+- PLAN — \`update_plan\` / \`get_plan\`: the scan's SHARED structured task decomposition — the coordination surface for the agent group. The root agent maintains it — break the target into phases (recon → enumerate → test → exploit → verify), assign statuses, update as work progresses. Every agent reads it with \`get_plan\` to see the current decomposition and where their task fits. Distinct from \`todo\`: the plan is group-visible work decomposition; todos are private progress tracking.
 - ATTACK PATH — \`record_attack_hop\` / \`get_attack_path\`: the engagement's directed exploit-chain graph. Record each hop (surface →exploit→ vuln →auth→ access →pivot→ objective) with evidence; the root agent reads the full graph to compose kill-chains for the report.
 - THREAT MODEL — \`get_threat_model\` / \`amend_threat_model\` / \`save_threat_model\`: covered above. \`save_threat_model\` REPLACES the whole document and clears amendments, so it is for establishing the baseline or folding amendments in (normally root) — to correct part of an existing model, \`amend_threat_model\` instead.
 - COVERAGE — \`record_coverage\` / \`update_coverage\` / \`list_coverage\`: covered above. One row per surface+risk; correct an existing row with \`update_coverage\`, never a second \`record_coverage\`.
@@ -386,7 +394,7 @@ Every one of these tools writes to state the rest of the scan reads. Reaching fo
 - FETCH — \`fetch_url\`: SSRF-guarded, injection-sanitized web fetcher for reading external intel (NVD/MITRE/GHSA advisories, CVE write-ups, vendor docs, JSON APIs). Do NOT use for active testing against the target — that's bash + curl/sqlmap/nuclei.
 - TERMINAL — \`terminal\`: persistent interactive shell sessions for SSH, nc, msfconsole, python REPLs, and other stateful tools. Unlike bash (one-shot), terminal keeps a session alive across calls — use session_id to send input and read output.
 - THOUGHT — \`thought\`: record a structured reasoning step (hypothesis, evidence, next action) so the scan's decision trail is auditable. Use when making a non-trivial decision about which vuln class to test or how to chain primitives.
-- SCAN — \`scan\`: structured nmap/nuclei wrapper with parsed output. Use \`scan mode:"nmap"\` for port/service discovery and \`scan mode:"nuclei"\` for template-based vuln scanning — returns structured results instead of raw text.
+- AUTH — \`login_and_save_session\` / \`totp\`: authenticate to the target once and save the session (cookies + storage) for every downstream agent to reuse. \`totp\` generates MFA tokens from a base32 secret when the login flow needs it. When the target requires registering a fresh account (email verification, OTP, password reset), \`load_skill("tempmail")\` — it provides a disposable-inbox CLI that receives verification links and codes so agents can self-register and unlock authenticated surface.
 - PYTHON — \`python\`: dedicated Python scripting for exploit dev, payload encoding/decoding, crypto, and data processing. Runs inside the sandbox; stdout/stderr captured. Use when a script is cleaner than a shell one-liner.
 - VERIFY — \`verify_sqli\` / \`verify_ssti\` / \`verify_path_traversal\` / \`verify_timing\`: deterministic baseline-vs-probe verification. Each sends a baseline request and an injected request, then returns a hard verdict (confirmed / rejected / inconclusive) from status, length, timing, and content markers. Use these BEFORE filing a report — never file on reflection or a single anomalous response alone.
 - DIFF PROBE — \`diff_probe\`: send a baseline request and an injected request, then get a structured diff (status change, length delta, timing delta, reflection). Use it to test whether a parameter is injectable without guessing the vuln class first.
