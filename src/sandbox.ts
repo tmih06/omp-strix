@@ -40,7 +40,7 @@ function privateDirectory(dir: string): string {
   if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
   const stat = lstatSync(dir);
   const uid = hostUid();
-  if (!stat.isDirectory() || (uid !== null && stat.uid !== uid) || (stat.mode & 0o077) !== 0) {
+  if (!stat.isDirectory() || (uid !== null && (stat.uid !== uid || (stat.mode & 0o077) !== 0))) {
     throw new Error(`${dir} must be a private, owner-owned directory (mode 0700)`);
   }
   return dir;
