@@ -1,7 +1,5 @@
 # omp-strix
-
-Watch it run
-![demo](https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExZDc3cDRzZ3E5M2MwZGY3czNhMG0zanN1M3U1cTdzbHBkbmJvbTVkZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/YghF6gJd21yXTCNUVf/giphy.gif)
+<img width="800" height="426" alt="out-ezgif com-optimize" src="https://github.com/user-attachments/assets/a66ac064-c167-43f6-a740-718ce04f4697" />
 
 Adversarial security-testing mode for [oh-my-pi](https://github.com/can1357/oh-my-pi) — a port of the [Strix](https://github.com/usestrix/strix) multi-agent pentest workflow to an omp plugin.
 
