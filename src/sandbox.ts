@@ -51,6 +51,36 @@ export async function containerRunning(): Promise<boolean> {
   return res.code === 0 && res.stdout.trim() === "true";
 }
 
+/** Repo digest of the local image ("ghcr.io/…@sha256:…"), or null. */
+async function localImageDigest(image: string): Promise<string | null> {
+  const res = await run(["image", "inspect", image, "-f", "{{range .RepoDigests}}{{.}} {{end}}"]);
+  if (res.code !== 0) return null;
+  const repo = image.split(":")[0];
+  const hit = res.stdout.split(/\s+/).find((d) => d.startsWith(`${repo}@`));
+  return hit?.split("@")[1] ?? null;
+}
+
+/** Digest of the remote manifest for `image` on GHCR, or null when unknown. */
+async function remoteImageDigest(image: string): Promise<string | null> {
+  const [repo, tag] = image.split(":");
+  try {
+    const tokRes = await fetch(`https://ghcr.io/token?scope=repository:${repo}:pull`);
+    const { token } = (await tokRes.json()) as { token?: string };
+    if (!token) return null;
+    const res = await fetch(`https://ghcr.io/v2/${repo}/manifests/${tag ?? "latest"}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept:
+          "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json",
+      },
+    });
+    if (!res.ok) return null;
+    return res.headers.get("docker-content-digest");
+  } catch {
+    return null; // offline / registry hiccup — treat as "no update info"
+  }
+}
+
 /**
  * Format a compact ASCII progress bar: `[████░░░░░░] 42%`.
  */
@@ -73,7 +103,7 @@ export function pullImage(
     stdout: string;
     stderr: string;
   }>();
-  onProgress?.("checking for image updates…");
+  onProgress?.("pulling image…");
   const child = spawn("docker", ["pull", image], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -195,6 +225,7 @@ export function buildImage(
  * at /workspace. Returns an error string on failure.
  */
 export async function ensureSandbox(cwd: string, onProgress?: (msg: string) => void): Promise<string | null> {
+  const image = sandboxImage();
   if (await containerRunning()) {
     // A surviving container may still mount a previous session's cwd —
     // verify the bind source matches before reusing it.
@@ -205,13 +236,31 @@ export async function ensureSandbox(cwd: string, onProgress?: (msg: string) => v
       NAME,
     ]);
     if (mounts.stdout.includes(`${cwd}:${WORKSPACE}`)) {
-      onProgress?.("container ready");
-      return null;
+      // Container is up — but check whether GHCR has a newer :latest.
+      // Cheap digest compare (~1s); only pull when it actually differs.
+      onProgress?.("checking for image updates…");
+      const [local, remote] = await Promise.all([localImageDigest(image), remoteImageDigest(image)]);
+      if (!remote || remote === local) {
+        onProgress?.(remote ? "image up to date" : "container ready");
+        return null;
+      }
+      onProgress?.("image update available — pulling…");
+      const pull = await pullImage(image, onProgress);
+      if (pull.code !== 0) {
+        // Pull failed (offline/auth) — keep the running container.
+        onProgress?.("update pull failed; keeping current container");
+        return null;
+      }
+      onProgress?.("recreating container on updated image…");
+      await run(["rm", "-f", NAME]);
+      // fall through to container creation below
+    } else {
+      await run(["rm", "-f", NAME]); // stale or wrong-mount container: recreate
     }
+  } else {
+    await run(["rm", "-f", NAME]); // stale or wrong-mount container: recreate
   }
-  await run(["rm", "-f", NAME]); // stale or wrong-mount container: recreate
 
-  const image = sandboxImage();
   // Always try to pull — when the local image is current this is a cheap
   // manifest check (~1s); when GHCR has a newer :latest it updates. If the
   // pull fails (offline, auth) fall back to whatever is already local, and
