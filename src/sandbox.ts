@@ -18,9 +18,11 @@ import { fileURLToPath } from "node:url";
 
 const NAME = "omp-strix-sandbox";
 export const WORKSPACE = "/workspace";
+export const SCRATCH = "/scratch";
 const DEFAULT_IMAGE = "ghcr.io/tmih06/omp-strix-sandbox:latest";
 const STATE_DIR = join(homedir(), ".omp", "agent", "strix");
 const ACTIVE_FILE = join(STATE_DIR, "active.json");
+const SCRATCH_DIR = join(STATE_DIR, "scratch");
 const DOCKERFILE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "sandbox");
 
 export function sandboxImage(): string {
@@ -280,8 +282,8 @@ export async function ensureSandbox(cwd: string, onProgress?: (msg: string) => v
     }
     // else: pull failed but a local image exists — use it (offline/stale ok).
   }
-
   onProgress?.("starting container…");
+  mkdirSync(SCRATCH_DIR, { recursive: true });
   const res = await run([
     "run",
     "-d",
@@ -292,18 +294,22 @@ export async function ensureSandbox(cwd: string, onProgress?: (msg: string) => v
     "--network",
     "host",
     // Container runs as root; the exec wrapper sets umask 000 so files it
-    // writes in /workspace are world-writable for the host user.
-    // Container /tmp is invisible to the host — redirect it into the mount.
+    // writes in /scratch are world-writable for the host user.
+    // /workspace is mounted READ-ONLY — the scan target's source must not be
+    // modified. Writable scratch (clones, temp files, tool output) goes to
+    // /scratch, a per-host dir under ~/.omp/agent/strix/scratch.
     "-e",
-    `TMPDIR=${WORKSPACE}/.tmp`,
+    `TMPDIR=${SCRATCH}/tmp`,
     "-v",
-    `${cwd}:${WORKSPACE}`,
+    `${cwd}:${WORKSPACE}:ro`,
+    "-v",
+    `${SCRATCH_DIR}:${SCRATCH}`,
     "-w",
     WORKSPACE,
     image,
     "sh",
     "-c",
-    "umask 000; mkdir -p /workspace/.tmp; exec sleep infinity",
+    "umask 000; mkdir -p /scratch/tmp; exec sleep infinity",
   ]);
   if (res.code !== 0) {
     return `docker run failed: ${res.stderr.trim() || res.stdout.trim()}`;
@@ -451,9 +457,10 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
 }
 
 /**
- * Rewrite a file-tool call's `path` arg so `/workspace/...` (the container
- * path agents see in the prompt) maps to the host-side mounted root.
- * Returns the new input object, or null when nothing needs rewriting.
+ * Rewrite a file-tool call's `path` arg so container paths map to host paths:
+ * `/workspace/...` → the mounted project root (read-only in-container), and
+ * `/scratch/...` → the shared writable scratch dir. Returns the new input
+ * object, or null when nothing needs rewriting.
  */
 export function rewritePathInput(input: Record<string, unknown>): Record<string, unknown> | null {
   const root = sandboxRoot();
@@ -463,5 +470,27 @@ export function rewritePathInput(input: Record<string, unknown>): Record<string,
   if (path === WORKSPACE || path.startsWith(`${WORKSPACE}/`)) {
     return { ...input, path: join(root, path.slice(WORKSPACE.length)) };
   }
+  if (path === SCRATCH || path.startsWith(`${SCRATCH}/`)) {
+    return { ...input, path: join(SCRATCH_DIR, path.slice(SCRATCH.length)) };
+  }
   return null;
+}
+
+/**
+ * True when a file-tool `path` arg targets the mounted workspace — i.e. the
+ * scan target's source tree. Used to block mutating tools (write/edit):
+ * the mount is read-only in-container, but file tools run on the host and
+ * would bypass it.
+ */
+export function isWorkspacePath(path: unknown): boolean {
+  if (typeof path !== "string" || path.trim() === "") return false;
+  const root = sandboxRoot();
+  if (!root) return false;
+  const resolved = path.startsWith("/")
+    ? path === WORKSPACE || path.startsWith(`${WORKSPACE}/`)
+      ? join(root, path.slice(WORKSPACE.length))
+      : path
+    : join(root, path);
+  const norm = resolved.replace(/\/+$/, "");
+  return norm === root || norm.startsWith(`${root}/`);
 }

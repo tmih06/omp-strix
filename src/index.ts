@@ -24,6 +24,7 @@ import {
   armSandbox,
   disarmSandbox,
   ensureSandboxRunning,
+  isWorkspacePath,
   markSandboxActive,
   rewriteBashInput,
   rewritePathInput,
@@ -547,9 +548,21 @@ export default function (pi: ExtensionAPI) {
       if (rewritten) return { input: rewritten };
       return;
     }
+    // Mutating file tools run on the host — the read-only /workspace mount
+    // does not stop them, so block writes into the scan target's tree here.
+    if (
+      (event.toolName === "write" || event.toolName === "edit") &&
+      isWorkspacePath((event.input as Record<string, unknown>)?.path)
+    ) {
+      return {
+        block: true,
+        reason:
+          "strix mounts the target read-only — writes to /workspace are blocked. Put scratch files in /scratch; deliver patches via the report's fix fields.",
+      };
+    }
     // File tools (write/read/grep/glob/edit) run on the host — map the
-    // container's /workspace prefix onto the mounted host root so agents
-    // can use the paths the prompt shows them.
+    // container's /workspace and /scratch prefixes onto the mounted host
+    // dirs so agents can use the paths the prompt shows them.
     const rewritten = rewritePathInput(event.input as Record<string, unknown>);
     if (rewritten) return { input: rewritten };
   });

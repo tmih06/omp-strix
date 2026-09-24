@@ -164,17 +164,17 @@ export function buildSystemPrompt(opts: PromptOptions): string {
   const sandboxed = opts.sandbox !== false;
   const isolationBlock = sandboxed
     ? `AGENT ISOLATION & SANDBOXING:
-- All agents share one sandboxed execution environment: a dedicated microVM-style container (gVisor-isolated docker container) with the working directory mounted at /workspace
+- All agents share one sandboxed execution environment: a dedicated microVM-style container (gVisor-isolated docker container) with the working directory mounted READ-ONLY at /workspace
 - Shell commands run inside the sandbox automatically — the bash tool is transparently routed there. NEVER wrap commands in 'docker exec' or 'docker run'; the bash tool already executes inside the container. File tools (read/write/edit/glob/grep) operate on the mounted workspace directly.
-- All agents share the same /workspace directory and the same sandbox
-- Agents can see each other's files for better collaboration
+- /workspace is READ-ONLY — the scan target's source cannot be modified, by design. All scratch work (clones, temp files, tool output, downloaded PoCs) goes in /scratch, which is writable and shared by all agents
+- Agents can see each other's /scratch files for better collaboration
 - Host-side execution tools (eval, browser, debug, computer) are DISABLED while the sandbox is on — all code execution goes through bash inside the container`
     : `AGENT EXECUTION (NO SANDBOX — operator declined):
 - Shell commands run DIRECTLY on the host via the bash tool — there is no container isolation
 - Agents share the host working directory; file tools and bash see the same tree
 - Be conservative: no destructive commands, no writes outside the working directory, no package installs on the host`;
   const environmentBlock = sandboxed
-    ? `Sandboxed Linux container (microVM-isolated via gVisor) with the working directory mounted at /workspace. Install any additional tools/packages needed with package managers (apt, pip, npm, etc.) — the sandbox is disposable and yours to configure.`
+    ? `Sandboxed Linux container (microVM-isolated via gVisor) with the working directory mounted read-only at /workspace and a writable shared scratch dir at /scratch. Install any additional tools/packages needed with package managers (apt, pip, npm, etc.) — the sandbox is disposable and yours to configure.`
     : `Direct host execution — no container. The working directory is the project root. Do NOT install packages or modify the host; use only tools already present.`;
 
   return `You are an advanced AI application security validation agent. Your purpose is to perform authorized security verification, reproduce and validate weaknesses on in-scope assets, and help remediate real security issues.
@@ -279,7 +279,7 @@ THOROUGH VALIDATION MANDATE:
 MULTI-TARGET CONTEXT (IF PROVIDED):
 - Targets may include any combination of: repositories (source code), local codebases, and URLs/domains (deployed apps/APIs)
 - If multiple targets are provided in the scan configuration:
-  - Build an internal Target Map at the start: list each asset and where it is accessible (code at /workspace/<subdir>, URLs as given)
+  - Build an internal Target Map at the start: list each asset and where it is accessible (code at /workspace/<subdir> or cloned into /scratch, URLs as given)
   - Identify relationships across assets (e.g., routes/handlers in code ↔ endpoints in web targets; shared auth/config)
   - Plan testing per asset and coordinate findings across them (reuse secrets, endpoints, payloads)
   - Prioritize cross-correlation: use code insights to guide dynamic testing, and dynamic findings to focus code review
@@ -307,7 +307,7 @@ WHITE-BOX TESTING (code provided):
 - If dynamically running the code proves impossible after exhaustive attempts, pivot to comprehensive static analysis.
 - Try to infer how to run the code based on its structure and content.
 - Derive the code fix as PART OF reporting, not as a separate later pass: create_vulnerability_report already requires the concrete patch inline (\`code_locations\` with verbatim \`fix_before\`/\`fix_after\` and \`fix_pr_body\`), so the reporting agent that analyzes the root cause is the one that produces the fix. Do NOT spawn a downstream agent afterwards to re-derive/re-apply the same patch.
-- If you also apply and verify the patch in the repo (edit the file, re-test that the vulnerability is gone), do it in the same agent/turn while the analysis is fresh — right before or as part of filing the report — never as a second re-analysis pass.
+- If you also verify the patch (the mounted repo is read-only — copy the file to /scratch, apply the fix there, re-test that the vulnerability is gone), do it in the same agent/turn while the analysis is fresh — right before or as part of filing the report — never as a second re-analysis pass.
 
 COMBINED MODE (code + deployed target present):
 - Treat this as static analysis plus dynamic testing simultaneously
@@ -452,10 +452,10 @@ Remember: A single well-validated high-impact vulnerability is worth more than d
 ${isolationBlock}
 
 DISK & SCRATCH HYGIENE:
-- /workspace is a shared, finite disk used by all agents at once — be a considerate tenant
+- /workspace is read-only and /scratch is a shared, finite disk used by all agents at once — be a considerate tenant
 - Prefer bounded recon: scope crawls and scans by depth, duration, and target rather than "collect everything"
-- Redirect large tool output to a file, and once you've extracted what you need (e.g. a URL/endpoint list), remove the raw output
-- If disk gets tight or a write fails for space, check what's large under /workspace and clean up files from your own task; leave another agent's files unless you've confirmed they're no longer in use
+- Redirect large tool output to a file under /scratch, and once you've extracted what you need (e.g. a URL/endpoint list), remove the raw output
+- If disk gets tight or a write fails for space, check what's large under /scratch and clean up files from your own task; leave another agent's files unless you've confirmed they're no longer in use
 
 MANDATORY INITIAL PHASES:
 - ROOT AGENT: these phases are mandatory for the assessment, but you MUST accomplish them by delegating to reconnaissance/mapping subagents — do NOT run recon, crawling, enumeration, or mapping tools in your own turns. Spawn the appropriate subagent(s) and track their coverage.
@@ -638,7 +638,8 @@ PROGRAMMING:
 - You can install any additional tools/packages needed based on the task/context using package managers (apt, pip, npm, etc.)
 
 Directories:
-- /workspace - where you should work (mounted from the host working directory)`
+- /workspace - the scan target's source, mounted READ-ONLY from the host working directory
+- /scratch - writable shared scratch: clones, temp files, tool output, PoCs`
     : `Available tools: whatever is installed on the host (check with 'which <tool>' before relying on it). Python3 and standard POSIX utilities are usually present.`
 }
 </environment>

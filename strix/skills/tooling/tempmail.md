@@ -91,7 +91,7 @@ the sandbox image via `sandbox/Dockerfile` (`COPY tempmail.py
 /usr/local/bin/tempmail`).
 
 If `tempmail` is not on PATH (stale image or host execution), write the
-embedded script below to `/workspace/.tmp/tempmail.py` and run it with
+embedded script below to `/scratch/tempmail.py` and run it with
 `python3` — identical CLI.
 
 ## Embedded script — tempmail.py
