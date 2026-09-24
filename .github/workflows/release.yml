@@ -64,7 +64,7 @@ jobs:
           context: sandbox
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/omp-strix-sandbox:tmp-${{ matrix.arch }}
+          tags: ghcr.io/${{ github.repository_owner }}/omp-strix-sandbox:rel-tmp-${{ matrix.arch }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
@@ -100,7 +100,7 @@ jobs:
             [ -n "$t" ] && args+=(-t "$t")
           done <<< '${{ steps.meta.outputs.tags }}'
           docker buildx imagetools create "${args[@]}" \
-            "$IMAGE:tmp-amd64" "$IMAGE:tmp-arm64"
+            "$IMAGE:rel-tmp-amd64" "$IMAGE:rel-tmp-arm64"
           docker buildx imagetools inspect "$IMAGE:latest"
 
       - name: Delete temp per-arch tags
@@ -116,7 +116,7 @@ jobs:
           fi
           for arch in amd64 arm64; do
             gh api "$base/packages/container/omp-strix-sandbox/versions" --paginate \
-              --jq ".[] | select(.metadata.container.tags[]? == \"tmp-$arch\") | .id" |
+              --jq ".[] | select(.metadata.container.tags[]? == \"rel-tmp-$arch\") | .id" |
             while read -r id; do
               [ -n "$id" ] && gh api -X DELETE "$base/packages/container/omp-strix-sandbox/versions/$id"
             done
