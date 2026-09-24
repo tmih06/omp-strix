@@ -12,7 +12,7 @@ import { boundOutput, run, runSandboxed, spawnSandboxed } from "./bash-tool";
 import { cvssBaseScore } from "./cvss";
 import { PLUGIN_ROOT } from "./paths";
 import { listSkills, loadSkillBody } from "./prompt";
-import { markSandboxActive, stopSandbox } from "./sandbox";
+import { disarmSandbox, markSandboxActive, stopSandbox } from "./sandbox";
 import type { DegradationReason, PlanTask, Report } from "./state";
 import {
   ackSignal,
@@ -2062,6 +2062,7 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     writeFinalReport(dir, payload);
     endScan();
     markSandboxActive(false);
+    disarmSandbox();
     await stopSandbox();
     return json({
       success: true,
@@ -2198,7 +2199,7 @@ Actions:
     if (action === "spawn") {
       const command = str(params, "command") || "bash";
       const id = `term-${++terminalCounter}`;
-      const { proc, sandboxed } = spawnSandboxed(command, {});
+      const { proc, sandboxed } = await spawnSandboxed(command, {});
       const session: TerminalSession = {
         id,
         proc,

@@ -19,11 +19,10 @@ import { strixBash } from "./bash-tool";
 import { PLUGIN_ROOT } from "./paths";
 import { buildSystemPrompt } from "./prompt";
 import {
-  containerRunning,
-  dockerAvailable,
-  ensureSandbox,
+  armSandbox,
+  disarmSandbox,
+  ensureSandboxRunning,
   markSandboxActive,
-  recordSandbox,
   rewriteBashInput,
   rewritePathInput,
   stopSandbox,
@@ -33,7 +32,6 @@ import {
   beginScan,
   collectSubagentMetrics,
   endScan,
-  getProjectDir,
   resumableScan,
   setProjectDir,
 } from "./state";
@@ -47,8 +45,6 @@ interface StrixState {
   preTools: string[] | null;
   /** Set once the first post-activation prompt has been captured as target. */
   scanStarted: boolean;
-  /** In-flight sandbox start, so concurrent bash calls don't double-start. */
-  sandboxStarting: Promise<string | null> | null;
   /** Whether bash is routed into the container this activation. */
   sandboxEnabled: boolean;
   /**
@@ -67,7 +63,6 @@ const strix: StrixState = {
   systemPrompt: null,
   preTools: null,
   scanStarted: false,
-  sandboxStarting: null,
   sandboxEnabled: true,
   ownerSessionId: null,
   prevTheme: null,
@@ -308,11 +303,21 @@ async function deactivate(
 ): Promise<void> {
   strix.active = false;
   restoreStatusLine(pi);
-  strix.sandboxStarting = null;
+  disarmSandbox();
   strix.sandboxEnabled = true;
   strix.systemPrompt = null;
   strix.scanStarted = false;
   strix.ownerSessionId = null;
+  // Restore the toolset captured at activation — the command description
+  // promises "restores tools" and strix tools must not leak into normal mode.
+  if (strix.preTools) {
+    try {
+      await pi.setActiveTools(strix.preTools);
+    } catch {
+      /* tool restore is best-effort */
+    }
+    strix.preTools = null;
+  }
   // Restore the pre-strix theme (captured as a Theme object at activation).
   if (strix.prevTheme) {
     try {
@@ -367,9 +372,44 @@ export default function (pi: ExtensionAPI) {
           sandbox = true;
         }
       }
-      strix.sandboxEnabled = sandbox;
-
       installTheme();
+      const tui = pi.pi;
+      strix.prevTheme =
+        tui &&
+        typeof tui === "object" &&
+        "getCurrentThemeName" in tui &&
+        typeof tui.getCurrentThemeName === "function"
+          ? String(tui.getCurrentThemeName() ?? "") || null
+          : null;
+      const themeResult = (await ctx.ui.setTheme?.("strix-red")) ?? { success: false, error: "no UI" };
+      if (!themeResult.success) {
+        ctx.ui.notify(`Theme 'strix-red' not loaded: ${themeResult.error}`, "warning");
+      }
+      pi.setSessionName("strix");
+      applyStrixStatusLine(pi);
+
+      if (sandbox) {
+        armSandbox(ctx.cwd ?? process.cwd());
+        // Eager startup on user acceptance: pull, update-check, and container
+        // creation run here with a live status-bar progress bar. Command
+        // handlers are interactive and not subject to the 30s event timeout.
+        ctx.ui.setStatus?.("strix_mode", "◆ STRIX · checking for updates…");
+        const onProgress = (msg: string) => {
+          ctx.ui.setStatus?.("strix_mode", `◆ STRIX · ${msg}`);
+        };
+        const err = await ensureSandboxRunning(onProgress);
+        if (err) {
+          ctx.ui.notify(`Sandbox failed to start (${err}) — running unsandboxed on host.`, "warning");
+          strix.sandboxEnabled = false;
+          disarmSandbox();
+        } else {
+          ctx.ui.notify("Sandbox container ready.", "info");
+        }
+      } else {
+        disarmSandbox();
+      }
+
+      ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
       strix.systemPrompt = buildSystemPrompt({ sandbox: strix.sandboxEnabled });
       const preTools = pi.getActiveTools();
       strix.preTools = preTools;
@@ -382,19 +422,6 @@ export default function (pi: ExtensionAPI) {
       // Root the scan store at this project's cwd — parallel scans in other
       // repos get their own strix/ tree and never see each other's state.
       setProjectDir(ctx.cwd ?? process.cwd());
-      // Capture the active theme NAME — setTheme rejects Theme objects
-      // ("Direct theme object not supported"), so the name is the only
-      // restorable handle. pi.pi re-exports @oh-my-pi/pi-tui/theme.
-      strix.prevTheme =
-        (pi.pi as { getCurrentThemeName?: () => string | undefined }).getCurrentThemeName?.() ?? null;
-      const themeResult = (await ctx.ui.setTheme?.("strix-red")) ?? { success: false, error: "no UI" };
-      if (!themeResult.success) {
-        ctx.ui.notify(`Theme 'strix-red' not loaded: ${themeResult.error}`, "warning");
-      }
-      pi.setSessionName("strix");
-      ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
-      applyStrixStatusLine(pi);
-      // Scan-wide token total (main session + subagent transcripts) beside
       // the builtin cost segment. Refreshed on an interval; cleared on
       // session_shutdown by the runner's managed timers.
       const updateTokens = () => {
@@ -491,8 +518,10 @@ export default function (pi: ExtensionAPI) {
     { pattern: /\bbase64\s+(-d|--decode)\b.*\|\s*(ba)?sh\b/, reason: "Base64 decode-and-pipe to shell" },
   ];
 
-  // Route bash calls into the sandbox while strix mode is on; the container
-  // starts lazily on the first call.
+  // Guardrails + path rewrites for tool calls while strix mode is on.
+  // MUST stay synchronous-fast: omp kills handlers after 30s, so sandbox
+  // startup (image pull) lives in the tools' execute() paths instead —
+  // see ensureSandboxRunning() in sandbox.ts.
   pi.on("tool_call", async (event) => {
     if (!strix.active || !strix.sandboxEnabled) return;
     if (HOST_EXEC_TOOLS.has(event.toolName)) {
@@ -510,38 +539,16 @@ export default function (pi: ExtensionAPI) {
           return { block: true, reason: `Blocked by strix safety guardrail: ${reason}` };
         }
       }
-    }
-    if (event.toolName !== "bash") {
-      // File tools (write/read/grep/glob/edit) run on the host — map the
-      // container's /workspace prefix onto the mounted host root so agents
-      // can use the paths the prompt shows them.
-      const rewritten = rewritePathInput(event.input as Record<string, unknown>);
+      // Only direct `docker exec` calls need rewriting (umask injection);
+      // plain commands are executed in-container by the shadow bash tool.
+      const rewritten = rewriteBashInput(event.input as Record<string, unknown>);
       if (rewritten) return { input: rewritten };
       return;
     }
-    strix.sandboxStarting ??= (async () => {
-      if (!(await dockerAvailable())) return "docker not available";
-      // Mount the session's project dir (ctx.cwd captured at activation),
-      // not process.cwd() — the agent process runs from ~/.omp/agent.
-      const root = getProjectDir();
-      const err = await ensureSandbox(root);
-      if (!err) {
-        recordSandbox(root);
-        markSandboxActive(true);
-      }
-      return err;
-    })();
-    const err = await strix.sandboxStarting;
-    if (err) return; // sandbox unavailable — run unsandboxed
-    // The container can die mid-scan (OOM, manual rm, a subagent's own
-    // docker call). Recreate it so the tool never execs into a dead name.
-    if (!(await containerRunning())) {
-      const restartErr = await ensureSandbox(getProjectDir());
-      if (restartErr) return;
-    }
-    // Only direct `docker exec` calls need rewriting (umask injection);
-    // plain commands are executed in-container by the shadow bash tool.
-    const rewritten = rewriteBashInput(event.input as Record<string, unknown>);
+    // File tools (write/read/grep/glob/edit) run on the host — map the
+    // container's /workspace prefix onto the mounted host root so agents
+    // can use the paths the prompt shows them.
+    const rewritten = rewritePathInput(event.input as Record<string, unknown>);
     if (rewritten) return { input: rewritten };
   });
 
@@ -566,7 +573,9 @@ export default function (pi: ExtensionAPI) {
       // the next session's tools write into this dead scan.
       endScan();
       markSandboxActive(false);
-      await stopSandbox();
+      disarmSandbox();
+      // Shutdown handlers get ~2s — docker rm can outlast that; don't await.
+      void stopSandbox();
     }
   });
 }

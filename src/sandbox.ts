@@ -10,7 +10,7 @@
  * shared container. STRIX_SANDBOX=off disables sandboxing entirely.
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -52,10 +52,149 @@ export async function containerRunning(): Promise<boolean> {
 }
 
 /**
+ * Format a compact ASCII progress bar: `[████░░░░░░] 42%`.
+ */
+export function renderProgressBar(pct: number, width = 10): string {
+  const clamped = Math.min(100, Math.max(0, Math.round(pct)));
+  const filled = Math.min(width, Math.max(0, Math.round((clamped / 100) * width)));
+  return `[${"█".repeat(filled)}${"░".repeat(width - filled)}] ${clamped}%`;
+}
+
+/**
+ * Pull an image with streaming line-by-line progress reporting.
+ * Layer download + extract milestones yield a 0–100% progress bar.
+ */
+export function pullImage(
+  image: string,
+  onProgress?: (msg: string) => void,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { promise, resolve } = Promise.withResolvers<{
+    code: number;
+    stdout: string;
+    stderr: string;
+  }>();
+  onProgress?.("checking for image updates…");
+  const child = spawn("docker", ["pull", image], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let remainder = "";
+  const layerScores = new Map<string, number>();
+
+  const parseLines = (text: string) => {
+    remainder += text;
+    const lines = remainder.split(/\r?\n/);
+    remainder = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.includes("Image is up to date")) {
+        onProgress?.("image up to date");
+        continue;
+      }
+      if (trimmed.includes("Downloaded newer image")) {
+        onProgress?.(`pull complete ${renderProgressBar(100)}`);
+        continue;
+      }
+      const m = trimmed.match(/^([a-f0-9]{8,12}):\s*(.*)$/i);
+      if (m) {
+        const [, id, action] = m;
+        let score = 0;
+        if (action.includes("Already exists") || action.includes("Pull complete")) score = 2;
+        else if (action.includes("Download complete")) score = 1;
+        layerScores.set(id, Math.max(layerScores.get(id) ?? 0, score));
+        const totalPoints = layerScores.size * 2;
+        const currentPoints = [...layerScores.values()].reduce((a, b) => a + b, 0);
+        if (totalPoints > 0) {
+          const pct = Math.round((currentPoints / totalPoints) * 100);
+          onProgress?.(`pulling ${renderProgressBar(pct)}`);
+        }
+      }
+    }
+  };
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8");
+    stdout += text;
+    parseLines(text);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+  child.on("close", (code) => {
+    if (remainder) parseLines("\n");
+    resolve({ code: code ?? 1, stdout, stderr });
+  });
+  child.on("error", (err) => {
+    resolve({ code: 1, stdout, stderr: err.message });
+  });
+  return promise;
+}
+
+/**
+ * Build an image from a local context dir with step-by-step progress reporting.
+ */
+export function buildImage(
+  image: string,
+  contextDir: string,
+  onProgress?: (msg: string) => void,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { promise, resolve } = Promise.withResolvers<{
+    code: number;
+    stdout: string;
+    stderr: string;
+  }>();
+  onProgress?.("building image from Dockerfile…");
+  const child = spawn("docker", ["build", "-t", image, contextDir], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let remainder = "";
+
+  const parseLines = (text: string) => {
+    remainder += text;
+    const lines = remainder.split(/\r?\n/);
+    remainder = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const stepMatch = trimmed.match(/Step\s+(\d+)\/(\d+)/i) ?? trimmed.match(/\[\s*(\d+)\/(\d+)\s*\]/);
+      if (stepMatch) {
+        const step = Number(stepMatch[1]);
+        const total = Number(stepMatch[2]);
+        if (total > 0) {
+          const pct = Math.round((step / total) * 100);
+          onProgress?.(`building ${renderProgressBar(pct)} (${step}/${total})`);
+        }
+      }
+    }
+  };
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8");
+    stdout += text;
+    parseLines(text);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+  child.on("close", (code) => {
+    if (remainder) parseLines("\n");
+    resolve({ code: code ?? 1, stdout, stderr });
+  });
+  child.on("error", (err) => {
+    resolve({ code: 1, stdout, stderr: err.message });
+  });
+  return promise;
+}
+
+/**
  * Ensure the sandbox container exists and is running, with `cwd` mounted
  * at /workspace. Returns an error string on failure.
  */
-export async function ensureSandbox(cwd: string): Promise<string | null> {
+export async function ensureSandbox(cwd: string, onProgress?: (msg: string) => void): Promise<string | null> {
   if (await containerRunning()) {
     // A surviving container may still mount a previous session's cwd —
     // verify the bind source matches before reusing it.
@@ -65,7 +204,10 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
       "{{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}",
       NAME,
     ]);
-    if (mounts.stdout.includes(`${cwd}:${WORKSPACE}`)) return null;
+    if (mounts.stdout.includes(`${cwd}:${WORKSPACE}`)) {
+      onProgress?.("container ready");
+      return null;
+    }
   }
   await run(["rm", "-f", NAME]); // stale or wrong-mount container: recreate
 
@@ -74,14 +216,15 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
   // manifest check (~1s); when GHCR has a newer :latest it updates. If the
   // pull fails (offline, auth) fall back to whatever is already local, and
   // only when nothing is local AND a Dockerfile exists, build from source.
-  const pull = await run(["pull", image]);
+  const pull = await pullImage(image, onProgress);
   if (pull.code !== 0) {
     const inspect = await run(["image", "inspect", image]);
     if (inspect.code !== 0) {
       if (!existsSync(join(DOCKERFILE_DIR, "Dockerfile"))) {
         return `docker pull ${image} failed: ${pull.stderr.trim() || pull.stdout.trim()}`;
       }
-      const build = await run(["build", "-t", image, DOCKERFILE_DIR]);
+      onProgress?.("pull failed; building image from Dockerfile…");
+      const build = await buildImage(image, DOCKERFILE_DIR, onProgress);
       if (build.code !== 0) {
         return `docker build ${image} failed: ${build.stderr.trim() || build.stdout.trim()}`;
       }
@@ -89,6 +232,7 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
     // else: pull failed but a local image exists — use it (offline/stale ok).
   }
 
+  onProgress?.("starting container…");
   const res = await run([
     "run",
     "-d",
@@ -115,11 +259,75 @@ export async function ensureSandbox(cwd: string): Promise<string | null> {
   if (res.code !== 0) {
     return `docker run failed: ${res.stderr.trim() || res.stdout.trim()}`;
   }
+  onProgress?.("container ready");
   return null;
 }
 
 export async function stopSandbox(): Promise<void> {
   await run(["rm", "-f", NAME]);
+}
+
+// ── Lazy startup orchestration ────────────────────────────────────────────
+// Event handlers (tool_call) are killed after ~30s — a first-run image pull
+// exceeds that, and a timed-out handler drops its result so the call falls
+// through to HOST execution. Startup therefore lives in tool execute()
+// paths (bounded by the tool timeout): armSandbox() records intent at
+// activation, ensureSandboxRunning() does the work on first exec.
+
+let desiredRoot: string | null = null;
+let starting: Promise<string | null> | null = null;
+
+/** Arm lazy sandbox startup with `root` mounted at /workspace. */
+export function armSandbox(root: string): void {
+  if (desiredRoot !== root) starting = null;
+  desiredRoot = root;
+}
+
+/** Disarm: subsequent execs run on the host; an in-flight start is orphaned. */
+export function disarmSandbox(): void {
+  desiredRoot = null;
+  starting = null;
+}
+
+/** Host dir mounted at /workspace while armed, or null when sandboxing is off. */
+export function sandboxRoot(): string | null {
+  return desiredRoot;
+}
+
+/**
+ * Ensure the armed sandbox is running. Returns null on success or when
+ * disarmed, an error string on failure (callers fall back to host exec).
+ * Memoized: concurrent callers share one pull/run, and a container that
+ * died mid-scan is recreated. Call from tool execute() — never a handler.
+ */
+export function ensureSandboxRunning(onProgress?: (msg: string) => void): Promise<string | null> {
+  const root = desiredRoot;
+  if (!root) return Promise.resolve(null);
+  starting ??= (async () => {
+    if (!(await dockerAvailable())) return "docker not available";
+    const err = await ensureSandbox(root, onProgress);
+    if (!err) {
+      recordSandbox(root);
+      markSandboxActive(true);
+    }
+    return err;
+  })();
+  return starting.then(async (err) => {
+    if (err) return err;
+    if (desiredRoot !== root) {
+      await stopSandbox(); // disarmed mid-start — clean up orphaned container
+      return null;
+    }
+    // The container can die mid-scan (OOM, manual rm, a subagent's own
+    // docker call). Recreate it so execs never hit a dead name.
+    if (!(await containerRunning())) {
+      const restartErr = await ensureSandbox(root, onProgress);
+      if (restartErr) return restartErr;
+      recordSandbox(root);
+      markSandboxActive(true);
+    }
+    return null;
+  });
 }
 
 export function markSandboxActive(on: boolean): void {
@@ -169,7 +377,7 @@ export function recordSandbox(workspaceRoot: string): void {
  * object, or null when the call shouldn't be rewritten.
  */
 export function rewriteBashInput(input: Record<string, unknown>): Record<string, unknown> | null {
-  if (!activeSandbox()) return null;
+  if (!sandboxRoot()) return null;
   const command = input.command;
   if (typeof command !== "string" || command.trim() === "") return null;
   const directExec = command.match(/docker\s+exec\s+(?:-\S+\s+)*omp-strix-sandbox\s+sh\s+-c\s+'/);
@@ -188,12 +396,12 @@ export function rewriteBashInput(input: Record<string, unknown>): Record<string,
  * Returns the new input object, or null when nothing needs rewriting.
  */
 export function rewritePathInput(input: Record<string, unknown>): Record<string, unknown> | null {
-  const sb = activeSandbox();
-  if (!sb?.workspaceRoot) return null;
+  const root = sandboxRoot();
+  if (!root) return null;
   const path = input.path;
   if (typeof path !== "string") return null;
   if (path === WORKSPACE || path.startsWith(`${WORKSPACE}/`)) {
-    return { ...input, path: join(sb.workspaceRoot, path.slice(WORKSPACE.length)) };
+    return { ...input, path: join(root, path.slice(WORKSPACE.length)) };
   }
   return null;
 }

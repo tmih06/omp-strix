@@ -13,7 +13,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { activeSandbox, WORKSPACE } from "./sandbox";
+import { activeSandbox, ensureSandboxRunning, WORKSPACE } from "./sandbox";
 import { activeScan, scanDir } from "./state";
 
 type Json = Record<string, unknown>;
@@ -128,14 +128,21 @@ export function run(
   });
 }
 
-/** Route a command into the sandbox container when active, else run on host.
- *  Used by terminal/python so they share the same isolation as bash. */
+/** Route a command into the sandbox container when armed, else run on host.
+ *  Used by terminal/python so they share the same isolation as bash.
+ *  Sandbox startup happens here (not in the tool_call handler — handlers
+ *  die after 30s, a first-run pull takes longer). */
 export async function runSandboxed(
   argv: string[],
   opts: { cwd?: string; timeoutS: number; signal?: AbortSignal },
 ): Promise<{ code: number; output: string; timedOut: boolean }> {
+  const startErr = await ensureSandboxRunning();
   const sb = activeSandbox();
-  if (!sb) return run(argv, opts);
+  if (!sb) {
+    const res = await run(argv, opts);
+    if (startErr) res.output = `[strix] sandbox unavailable (${startErr}) — ran on host.\n${res.output}`;
+    return res;
+  }
   // Wrap the argv as a single shell command inside the container.
   const inner = `umask 000; cd ${JSON.stringify(containerCwd(opts.cwd, sb.workspaceRoot))} && ${argv.map((a) => JSON.stringify(a)).join(" ")}`;
   return run(["docker", "exec", "omp-strix-sandbox", "bash", "-lc", inner], {
@@ -144,12 +151,13 @@ export async function runSandboxed(
   });
 }
 
-/** Spawn a persistent shell inside the sandbox when active, else on host.
+/** Spawn a persistent shell inside the sandbox when armed, else on host.
  *  Returns the ChildProcess and a flag indicating sandbox routing. */
-export function spawnSandboxed(
+export async function spawnSandboxed(
   command: string,
   opts: { cwd?: string },
-): { proc: ChildProcess; sandboxed: boolean } {
+): Promise<{ proc: ChildProcess; sandboxed: boolean }> {
+  await ensureSandboxRunning();
   const sb = activeSandbox();
   if (!sb) {
     const proc = spawn("bash", ["-c", command], {
@@ -634,6 +642,19 @@ export function strixBash(pi: ExtensionAPI) {
         typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : DEFAULT_TIMEOUT_S;
       const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
 
+      // Sandbox startup lives here, not in the tool_call handler — handlers
+      // are killed after 30s and a first-run image pull takes longer. Await
+      // it abort-aware so a cancelled call doesn't hang on the pull.
+      const startErr = await new Promise<string | null>((resolve) => {
+        if (signal?.aborted) return resolve("aborted");
+        const onAbort = () => resolve("aborted");
+        signal?.addEventListener("abort", onAbort, { once: true });
+        void ensureSandboxRunning()
+          .then(resolve)
+          .catch((e) => resolve(`sandbox start failed: ${e}`))
+          .finally(() => signal?.removeEventListener("abort", onAbort));
+      });
+      if (startErr === "aborted") return text("bash: aborted while waiting for the sandbox");
       const sb = activeSandbox();
       const isDockerCall = /^\s*docker\s/.test(command);
       const started = Date.now();
@@ -667,12 +688,13 @@ export function strixBash(pi: ExtensionAPI) {
       // Host path: no sandbox, or the agent deliberately issued a docker command.
       const res = await run(["bash", "-c", command], { cwd, timeoutS, signal });
       const bounded = boundOutput(res.output, res.timedOut, timeoutS);
+      const warn = startErr ? `[strix] sandbox unavailable (${startErr}) — ran on host.\n` : "";
       const hint =
         res.code !== 0
           ? (missingToolHint(res.output) ?? classifyToolError(res.output, res.code, res.timedOut))
           : "";
       return {
-        content: [{ type: "text", text: bounded.text + hint }],
+        content: [{ type: "text", text: warn + bounded.text + hint }],
         details: {
           exitCode: res.code,
           timedOut: res.timedOut,
