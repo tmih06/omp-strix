@@ -12,7 +12,6 @@ import { boundOutput, run, runSandboxed, spawnSandboxed } from "./bash-tool";
 import { cvssBaseScore } from "./cvss";
 import { PLUGIN_ROOT } from "./paths";
 import { listSkills, loadSkillBody } from "./prompt";
-import { disarmSandbox, markSandboxActive, stopSandbox } from "./sandbox";
 import type { DegradationReason, PlanTask, Report } from "./state";
 import {
   ackSignal,
@@ -1959,7 +1958,7 @@ const finishScan: ToolDef = {
   label: "Finish Scan",
   description: `Close the scan and write the final report.
 
-Call only when testing is complete: every hypothesis resolved, coverage reconciled, findings filed. Assembles final-report.json plus a human-readable final-report.md in the scan directory from the reports, coverage ledger, and threat models, marks the scan finished, and tears down the sandbox. Each filed report also carries a sibling .md next to its .json under reports/.
+Call only when testing is complete: every hypothesis resolved, coverage reconciled, findings filed. Assembles final-report.json plus a human-readable final-report.md in the scan directory from the reports, coverage ledger, and threat models, and marks the scan finished. Strix mode stays on afterward so the user can keep discussing the findings — /strix ends the mode. Each filed report also carries a sibling .md next to its .json under reports/.
 GATE: the call is REJECTED while any coverage entry is still needs_follow_up, or while a findings note carries concrete exploit proof (uid=, /etc/passwd, union select, OOB callback, …) that was never filed as a report. Resolve them first — or pass force=true to close with the gaps disclosed in the report.
 Before calling: list_reports to confirm what was filed, and list_coverage(outcome="needs_follow_up") to confirm nothing is still open.`,
   parameters: {
@@ -2061,9 +2060,6 @@ Before calling: list_reports to confirm what was filed, and list_coverage(outcom
     };
     writeFinalReport(dir, payload);
     endScan();
-    markSandboxActive(false);
-    disarmSandbox();
-    await stopSandbox();
     return json({
       success: true,
       message: forcedGaps

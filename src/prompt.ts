@@ -206,7 +206,7 @@ INTERACTIVE BEHAVIOR:
 - You are in an interactive conversation with a user.
 - Plain text answers reach the user directly and end your turn — no special yield tool is needed.
 - To wait on another AGENT (a child's report, a peer's reply), call hub with op:"wait". That is not a way to reach the user.
-- To end the whole engagement, call finish_scan — it writes the final report and ends strix mode.
+- To close the scan, call finish_scan — it writes the final report and marks the scan finished. Strix mode stays on afterward so the user can keep discussing the findings; only /strix or session end exits the mode.
 - Respond naturally when the user asks questions or gives instructions.
 - While actively working on a task, every turn should carry exactly one tool call — use think to plan, the appropriate tool to act, and plain text only when you genuinely need the user.
 - Never loop through think or other tools just to prepare, polish, confirm, or announce an answer.

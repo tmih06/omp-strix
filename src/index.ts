@@ -7,8 +7,10 @@
  * hidden (runtime-only settings override — nothing persisted). The operator
  * names the target and depth in conversation; the first prompt after
  * activation is captured as the scan target and starts
- * the scan record. The sandbox container starts lazily on the first `bash`
- * call. `/strix` again (or `finish_scan`, or session shutdown) ends the mode.
+ * the scan record. The sandbox container spins up when the user accepts
+ * the sandbox prompt (progress bar in the status line).
+ * call. `/strix` again (or session shutdown) ends the mode — finish_scan
+ * closes the scan but keeps the mode on so the user can discuss findings.
  */
 
 import { copyFileSync, mkdirSync } from "node:fs";
@@ -550,16 +552,6 @@ export default function (pi: ExtensionAPI) {
     // can use the paths the prompt shows them.
     const rewritten = rewritePathInput(event.input as Record<string, unknown>);
     if (rewritten) return { input: rewritten };
-  });
-
-  // finish_scan ends the mode too — the tool can't reach this module's
-  // state, so the runner-side hook does the teardown.
-  pi.on("tool_result", async (event, ctx) => {
-    if (!strix.active) return;
-    const e = event as { toolName?: string };
-    if (e.toolName === "finish_scan") {
-      await deactivate(pi, ctx);
-    }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
