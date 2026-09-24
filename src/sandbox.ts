@@ -21,21 +21,26 @@ const NAME = "omp-strix-sandbox";
 export const WORKSPACE = "/workspace";
 export const SCRATCH = "/scratch";
 const DEFAULT_IMAGE = "ghcr.io/tmih06/omp-strix-sandbox:latest";
-function hostUid(): number {
-  const uid = process.getuid?.();
-  if (uid === undefined) throw new Error("Docker sandbox requires a POSIX user identity");
-  return uid;
+function hostUid(): number | null {
+  return process.getuid?.() ?? null;
 }
 function hostIdentity(): string {
+  const uid = process.getuid?.();
   const gid = process.getgid?.();
-  if (gid === undefined) throw new Error("Docker sandbox requires a POSIX group identity");
-  return `${hostUid()}:${gid}`;
+  if (uid === undefined || gid === undefined) {
+    throw new Error("Docker sandbox requires a POSIX user identity");
+  }
+  return `${uid}:${gid}`;
 }
-/** All mounted host directories and scan artifacts live under the project. */
+/** All mounted host directories and scan artifacts live under the project.
+ *  POSIX ownership/mode checks apply where the platform exposes them; on
+ *  Windows (no getuid, no real chmod) only the directory check is possible —
+ *  the container itself still enforces the isolation boundary. */
 function privateDirectory(dir: string): string {
   if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
   const stat = lstatSync(dir);
-  if (!stat.isDirectory() || stat.uid !== hostUid() || (stat.mode & 0o077) !== 0) {
+  const uid = hostUid();
+  if (!stat.isDirectory() || (uid !== null && stat.uid !== uid) || (stat.mode & 0o077) !== 0) {
     throw new Error(`${dir} must be a private, owner-owned directory (mode 0700)`);
   }
   return dir;
