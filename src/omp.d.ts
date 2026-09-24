@@ -10,8 +10,12 @@ declare module "@oh-my-pi/pi-coding-agent" {
     readonly theme?: unknown;
     setWorkingMessage(text: string): void;
     setTitle?(title: string): void;
-    setWidget?(key: string, content: unknown, opts?: unknown): void;
-    setStatus?(key: string, text: string): void;
+    setWidget?(
+      key: string,
+      content: string[] | undefined,
+      opts?: { placement?: "aboveEditor" | "belowEditor" },
+    ): void;
+    setStatus?(key: string, text: string | undefined): void;
     select?(opts: unknown): Promise<unknown>;
     confirm?(title: string, message: string, opts?: unknown): Promise<boolean>;
     input?(opts: unknown): Promise<string>;

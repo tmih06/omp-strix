@@ -1,12 +1,10 @@
 /**
  * Scan-state store for strix mode.
  *
- * Layout (mirrors strix's per-scan shared state, file-backed so every agent
- * session in the process sees the same data regardless of module instance).
- * Rooted at the PROJECT's working directory so parallel scans in different
- * repos never share state:
+ * Layout: only ./.strix/ in the target checkout is writable by the trusted
+ * extension for scan metadata; /scratch is mounted from ./.strix/scratch.
  *
- *   <projectDir>/strix/
+ *   <projectDir>/.strix/
  *     active.json                      -> { scanId, dir, target, scanMode, startedAt }
  *     scans/<scanId>/
  *       notes/<id>.json                -> one file per note (append-only, no RMW races)
@@ -17,45 +15,95 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
   type FinalReportPayload,
   renderFinalReportMarkdown,
   renderReportMarkdown,
   renderSarif,
 } from "./report";
+import { localStateRoot } from "./sandbox";
 
 export interface ActiveScan {
   scanId: string;
   dir: string;
   target: string;
   scanMode: string;
+  sandboxed: boolean;
   startedAt: string;
 }
 
-/** Project working directory the scan store is rooted at. Set from ctx.cwd
- *  at /strix activation; defaults to process cwd so tools work before that. */
+/** Per-project store under ./.strix; scan targets remain read-only in-container. */
 let projectDir = process.cwd();
 export function setProjectDir(dir: string): void {
-  projectDir = dir;
+  projectDir = realpathSync(dir);
 }
 export function getProjectDir(): string {
   return projectDir;
 }
-const strixRoot = () => join(projectDir, "strix");
+const strixRoot = () => join(projectDir, ".strix");
 const activeFile = () => join(strixRoot(), "active.json");
 const scansDir = () => join(strixRoot(), "scans");
 
+/** Reject repository-supplied symlinks in the control-plane directory tree. */
+function ensureWriteDir(dir: string): void {
+  const root = join(projectDir, ".strix");
+  const rel = relative(root, dir);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    // Public state helpers also accept unrelated caller-owned temp dirs.
+    mkdirSync(dir, { recursive: true });
+    return;
+  }
+  localStateRoot(projectDir);
+  let current = root;
+  for (const part of rel.split(sep).filter(Boolean)) {
+    current = join(current, part);
+    if (existsSync(current)) {
+      if (!lstatSync(current).isDirectory()) throw new Error(`Unsafe scan directory: ${current}`);
+    } else {
+      mkdirSync(current, { mode: 0o700 });
+    }
+  }
+}
+
 function atomicWrite(path: string, data: string): void {
-  mkdirSync(dirname(path), { recursive: true });
+  ensureWriteDir(dirname(path));
   const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  writeFileSync(tmp, data, "utf8");
+  writeFileSync(tmp, data, { encoding: "utf8", mode: 0o600 });
   renameSync(tmp, path);
+}
+
+/** Never follow a repository-supplied symlink through scan-state reads. */
+function safeStatePath(path: string, directory: boolean): boolean {
+  const root = join(projectDir, ".strix");
+  const rel = relative(root, path);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return true;
+  if (!lstatSync(root).isDirectory()) return false;
+  localStateRoot(projectDir);
+  let current = root;
+  const parts = rel.split(sep).filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    current = join(current, parts[i]);
+    const stat = lstatSync(current);
+    if (!(i === parts.length - 1 && !directory ? stat.isFile() : stat.isDirectory())) return false;
+  }
+  return true;
 }
 
 function readJson<T>(path: string): T | null {
   try {
+    if (!safeStatePath(path, false)) return null;
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
     return null;
@@ -63,7 +111,11 @@ function readJson<T>(path: string): T | null {
 }
 
 function listJson<T>(dir: string): T[] {
-  if (!existsSync(dir)) return [];
+  try {
+    if (!safeStatePath(dir, true)) return [];
+  } catch {
+    return [];
+  }
   const out: T[] = [];
   for (const name of readdirSync(dir)) {
     if (!name.endsWith(".json")) continue;
@@ -73,60 +125,78 @@ function listJson<T>(dir: string): T[] {
   return out;
 }
 
-export function beginScan(target: string, scanMode: string): ActiveScan {
+/** IDs are single filename components, never paths or regex fragments. */
+function validId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id);
+}
+/** Ignore forged active records pointing outside the current scan store. */
+function readActiveScan(path: string): ActiveScan | null {
+  try {
+    if (!lstatSync(path).isFile()) return null;
+    const scan = readJson<ActiveScan>(path);
+    if (
+      !scan ||
+      typeof scan.scanId !== "string" ||
+      !/^scan-[a-z0-9]+-[a-f0-9]{6}$/.test(scan.scanId) ||
+      typeof scan.sandboxed !== "boolean"
+    ) {
+      return null;
+    }
+    return scan.dir === join(scansDir(), scan.scanId) && safeStatePath(scan.dir, true) ? scan : null;
+  } catch {
+    return null;
+  }
+}
+
+export function beginScan(target: string, scanMode: string, sandboxed: boolean): ActiveScan {
   const scanId = `scan-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
   const dir = join(scansDir(), scanId);
+  ensureWriteDir(dir);
   const scan: ActiveScan = {
     scanId,
     dir,
     target,
     scanMode,
+    sandboxed,
     startedAt: new Date().toISOString(),
   };
-  // Keep scan artifacts out of the project's git status.
-  const gi = join(strixRoot(), ".gitignore");
-  if (!existsSync(gi)) atomicWrite(gi, "*\n");
   atomicWrite(activeFile(), JSON.stringify(scan, null, 2));
   return scan;
 }
 
 export function endScan(): void {
+  const file = activeFile();
+  if (!existsSync(file)) return;
+  localStateRoot(projectDir);
   try {
-    if (existsSync(activeFile())) {
-      const scan = readJson<ActiveScan>(activeFile());
-      if (scan) {
-        atomicWrite(join(scan.dir, "ended.json"), JSON.stringify({ endedAt: new Date().toISOString() }));
-      }
+    const scan = readActiveScan(file);
+    if (scan) {
+      atomicWrite(join(scan.dir, "ended.json"), JSON.stringify({ endedAt: new Date().toISOString() }));
     }
   } finally {
     try {
-      renameSync(activeFile(), `${activeFile()}.last`);
+      renameSync(file, `${file}.last`);
     } catch {
       /* already gone */
     }
   }
 }
 
-/** Resolve the scan dir for a tool call. Falls back to the last active scan. */
+/** Resolve only validated scan dirs; never follow a forged active.json dir. */
 export function scanDir(): string | null {
-  const active = readJson<ActiveScan>(activeFile());
-  if (active?.dir) return active.dir;
-  const last = readJson<ActiveScan>(`${activeFile()}.last`);
-  return last?.dir ?? null;
+  const active = readActiveScan(activeFile());
+  if (active) return active.dir;
+  return readActiveScan(`${activeFile()}.last`)?.dir ?? null;
 }
 
 export function activeScan(): ActiveScan | null {
-  return readJson<ActiveScan>(activeFile());
+  return readActiveScan(activeFile());
 }
 
-/**
- * Resume an interrupted scan: returns the live ActiveScan when active.json
- * exists and its scan dir has no ended.json marker (i.e. the previous
- * session died before finish_scan/deactivate ran).
- */
+/** Resume a validated interrupted scan without an ended.json marker. */
 export function resumableScan(): ActiveScan | null {
-  const scan = readJson<ActiveScan>(activeFile());
-  if (!scan?.dir) return null;
+  const scan = activeScan();
+  if (!scan) return null;
   try {
     if (existsSync(join(scan.dir, "ended.json"))) return null;
   } catch {
@@ -261,10 +331,11 @@ export function listNotes(dir: string): Note[] {
 }
 
 export function getNote(dir: string, id: string): Note | null {
-  return readJson<Note>(join(dir, "notes", `${id}.json`));
+  return validId(id) ? readJson<Note>(join(dir, "notes", `${id}.json`)) : null;
 }
 
 export function putNote(dir: string, note: Note): void {
+  if (!validId(note.id)) throw new Error("Invalid note id");
   atomicWrite(join(dir, "notes", `${note.id}.json`), JSON.stringify(note, null, 2));
 }
 
@@ -304,6 +375,7 @@ export function addCoverage(
 }
 
 export function putCoverage(dir: string, entry: CoverageEntry): void {
+  if (!validId(entry.id)) throw new Error("Invalid coverage id");
   atomicWrite(join(dir, "coverage", `${entry.id}.json`), JSON.stringify(entry, null, 2));
 }
 
@@ -313,10 +385,13 @@ export function listCoverage(dir: string): CoverageEntry[] {
   );
 }
 export function deleteFile(dir: string, bucket: string, id: string): void {
+  if (!validId(bucket) || !validId(id)) return;
   try {
-    rmSync(join(dir, bucket, `${id}.json`));
+    const bucketDir = join(dir, bucket);
+    if (!safeStatePath(bucketDir, true)) return;
+    rmSync(join(bucketDir, `${id}.json`));
   } catch {
-    /* already gone */
+    /* already gone or unsafe directory */
   }
 }
 
@@ -459,10 +534,14 @@ export interface Candidate {
 
 /** Mint the next candidate id for a class: {CLASS}-NN. */
 export function nextCandidateId(dir: string, cls: string): string {
-  const prefix = cls.toUpperCase().slice(0, 4);
+  const prefix =
+    cls
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 4) || "MISC";
   const candidatesDir = join(dir, "candidates");
   let max = 0;
-  if (existsSync(candidatesDir)) {
+  if (existsSync(candidatesDir) && safeStatePath(candidatesDir, true)) {
     for (const name of readdirSync(candidatesDir)) {
       const m = name.match(new RegExp(`^${prefix}-(\\d+)\\.json$`));
       if (m) max = Math.max(max, Number.parseInt(m[1], 10));
@@ -483,10 +562,11 @@ export function addCandidate(
 }
 
 export function getCandidate(dir: string, id: string): Candidate | null {
-  return readJson<Candidate>(join(dir, "candidates", `${id}.json`));
+  return validId(id) ? readJson<Candidate>(join(dir, "candidates", `${id}.json`)) : null;
 }
 
 export function putCandidate(dir: string, candidate: Candidate): void {
+  if (!validId(candidate.id)) throw new Error("Invalid candidate id");
   atomicWrite(join(dir, "candidates", `${candidate.id}.json`), JSON.stringify(candidate, null, 2));
 }
 
@@ -553,6 +633,7 @@ export function listSignals(dir: string, acked?: boolean): Signal[] {
 }
 
 export function ackSignal(dir: string, id: string): void {
+  if (!validId(id)) return;
   const s = readJson<Signal>(join(dir, "signals", `${id}.json`));
   if (s) {
     s.acked = true;
@@ -673,9 +754,10 @@ export interface Report {
 }
 
 export function nextReportId(dir: string, prefix: string): string {
+  if (!validId(prefix)) throw new Error("Invalid report prefix");
   const reportsDir = join(dir, "reports");
   let max = 0;
-  if (existsSync(reportsDir)) {
+  if (existsSync(reportsDir) && safeStatePath(reportsDir, true)) {
     for (const name of readdirSync(reportsDir)) {
       const m = name.match(new RegExp(`^${prefix}-(\\d+)\\.json$`));
       if (m) max = Math.max(max, Number.parseInt(m[1], 10));
@@ -693,10 +775,11 @@ export function addReport(dir: string, prefix: string, report: Omit<Report, "id"
 }
 
 export function getReport(dir: string, id: string): Report | null {
-  return readJson<Report>(join(dir, "reports", `${id}.json`));
+  return validId(id) ? readJson<Report>(join(dir, "reports", `${id}.json`)) : null;
 }
 
 export function putReport(dir: string, report: Report): void {
+  if (!validId(report.id)) throw new Error("Invalid report id");
   atomicWrite(join(dir, "reports", `${report.id}.json`), JSON.stringify(report, null, 2));
   atomicWrite(join(dir, "reports", `${report.id}.md`), renderReportMarkdown(report));
 }

@@ -1,12 +1,9 @@
 /**
- * Sandbox-aware `bash` replacement. Registered under the builtin name so the
- * transcript shows the agent's original command — the docker exec wrapper
- * lives inside execute(), not in the displayed/persisted input.
- *
- * When the strix sandbox is active the command runs via `docker exec` into
- * the shared container; otherwise it falls back to host `bash -c`. Commands
- * that already start with `docker` always run on the host (the container has
- * no docker client).
+ * Sandbox-aware `bash` replacement. Commands run via docker exec when a
+ * sandbox is armed; startup/recording failures MUST NOT fall back to host.
+ * runSandboxed/spawnSandboxed (used by the strix tools) ALWAYS require a
+ * verified sandbox — there is no host path. Host execution is only possible
+ * through the bash tool itself when sandboxing was explicitly disabled.
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
@@ -128,8 +125,10 @@ export function run(
   });
 }
 
-/** Route a command into the sandbox container when armed, else run on host.
- *  Used by terminal/python so they share the same isolation as bash.
+/** Route a command into the sandbox container — strix tools never run on
+ *  host. Used by terminal/python/scan/fetch so they share the same isolation
+ *  as bash. Throws when no verified sandbox is active: a missing marker,
+ *  failed startup, or an unarmed session all fail closed.
  *  Sandbox startup happens here (not in the tool_call handler — handlers
  *  die after 30s, a first-run pull takes longer). */
 export async function runSandboxed(
@@ -138,36 +137,29 @@ export async function runSandboxed(
 ): Promise<{ code: number; output: string; timedOut: boolean }> {
   const startErr = await ensureSandboxRunning();
   const sb = activeSandbox();
-  if (!sb) {
-    const res = await run(argv, opts);
-    if (startErr) res.output = `[strix] sandbox unavailable (${startErr}) — ran on host.\n${res.output}`;
-    return res;
+  if (startErr || !sb) {
+    throw new Error(`sandbox unavailable: ${startErr ?? "no active sandbox"}`);
   }
   // Wrap the argv as a single shell command inside the container.
-  const inner = `umask 000; cd ${JSON.stringify(containerCwd(opts.cwd, sb.workspaceRoot))} && ${argv.map((a) => JSON.stringify(a)).join(" ")}`;
+  const inner = `umask 077; cd ${JSON.stringify(containerCwd(opts.cwd, sb.workspaceRoot))} && ${argv.map((a) => JSON.stringify(a)).join(" ")}`;
   return run(["docker", "exec", "omp-strix-sandbox", "bash", "-lc", inner], {
     timeoutS: opts.timeoutS,
     signal: opts.signal,
   });
 }
 
-/** Spawn a persistent shell inside the sandbox when armed, else on host.
- *  Returns the ChildProcess and a flag indicating sandbox routing. */
+/** Spawn a persistent shell inside the sandbox container — strix tools never
+ *  run on host. Throws when no verified sandbox is active. */
 export async function spawnSandboxed(
   command: string,
   opts: { cwd?: string },
 ): Promise<{ proc: ChildProcess; sandboxed: boolean }> {
-  await ensureSandboxRunning();
+  const startErr = await ensureSandboxRunning();
   const sb = activeSandbox();
-  if (!sb) {
-    const proc = spawn("bash", ["-c", command], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, TERM: "dumb" },
-      cwd: opts.cwd,
-    });
-    return { proc, sandboxed: false };
+  if (startErr || !sb) {
+    throw new Error(`sandbox unavailable: ${startErr ?? "no active sandbox"}`);
   }
-  const inner = `umask 000; cd ${JSON.stringify(containerCwd(opts.cwd, sb.workspaceRoot))} && ${command}`;
+  const inner = `umask 077; cd ${JSON.stringify(containerCwd(opts.cwd, sb.workspaceRoot))} && ${command}`;
   const proc = spawn("docker", ["exec", "-i", "omp-strix-sandbox", "bash", "-lc", inner], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, TERM: "dumb" },
@@ -309,6 +301,7 @@ const NOT_FOUND_RES = [
 ];
 
 const INSTALL_HINTS: Record<string, string> = {
+  docker: "Docker control is deliberately unavailable inside the sandbox",
   nuclei: "should be preinstalled — check PATH or reinstall image",
   ffuf: "should be preinstalled — check PATH or reinstall image",
   subfinder: "should be preinstalled — check PATH or reinstall image",
@@ -536,7 +529,8 @@ export function strixBash(pi: ExtensionAPI) {
     },
     renderCall(args: Record<string, unknown>, opts: { spinnerFrame?: number }, theme: FullTheme) {
       const cmd = typeof args?.command === "string" ? args.command : "";
-      const sandboxed = activeSandbox() !== null && !/^\s*docker\s/.test(cmd);
+      const sandboxed =
+        sandboxRoot() !== null || activeSandbox() !== null || activeScan()?.sandboxed === true;
       const running = opts?.spinnerFrame !== undefined;
       const icon = running
         ? theme.styledSymbol?.("status.running", "accent")
@@ -610,8 +604,9 @@ export function strixBash(pi: ExtensionAPI) {
         if (first) recentCommands.delete(first);
       }
 
-      // Scope enforcement: extract IPs/domains from the command and check
-      // against the active scan target. Blocks out-of-scope testing.
+      // Check literal network destinations only. Bare dotted words in a
+      // command are often source filenames (package.json, config.yaml);
+      // a shell-string heuristic is not a network policy.
       const scan = activeScan();
       if (scan?.target) {
         const targetHosts = scan.target
@@ -625,12 +620,12 @@ export function strixBash(pi: ExtensionAPI) {
               .replace(/:\d+$/, ""),
           )
           .filter(Boolean);
-        const cmdHosts =
-          command.match(
-            /\b(?:https?:\/\/)?([a-z0-9.-]+\.[a-z]{2,}|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/gi,
-          ) ?? [];
-        const outOfScope = cmdHosts.filter((h) => {
-          const host = h.replace(/^https?:\/\//, "").toLowerCase();
+        const cmdHosts = [
+          ...command.matchAll(
+            /https?:\/\/([a-z0-9.-]+\.[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})|(?<![a-z0-9./])(\d{1,3}(?:\.\d{1,3}){3})(?![a-z0-9./])/gi,
+          ),
+        ].map((m) => (m[1] ?? m[2]).toLowerCase());
+        const outOfScope = cmdHosts.filter((host) => {
           return !targetHosts.some((t) => host === t || host.endsWith(`.${t}`) || t.endsWith(`.${host}`));
         });
         if (outOfScope.length > 0) {
@@ -657,15 +652,23 @@ export function strixBash(pi: ExtensionAPI) {
           .finally(() => signal?.removeEventListener("abort", onAbort));
       });
       if (startErr === "aborted") return text("bash: aborted while waiting for the sandbox");
+      const required = sandboxRoot() !== null || activeSandbox() !== null || activeScan()?.sandboxed === true;
       const sb = activeSandbox();
-      const isDockerCall = /^\s*docker\s/.test(command);
       const started = Date.now();
-      if (sb && !isDockerCall) {
-        // umask 000: the container runs as root — files it writes into the
-        // /workspace mount must stay world-writable for the host user.
-        // bash -lc: login shell so user-installed tools (~/.local/bin,
-        // ~/go/bin, pipx) resolve — plain `sh -c` skips profile PATH.
-        const inner = `umask 000; cd ${JSON.stringify(containerCwd(cwd, sb.workspaceRoot))} && ${command}`;
+      if (required && (startErr || !sb)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `bash: sandbox unavailable (${startErr ?? "sandbox state not recorded"}); command NOT run.`,
+            },
+          ],
+          details: { exitCode: 1, sandboxed: false, durationMs: Date.now() - started },
+        };
+      }
+      if (sb) {
+        // bash -lc: login shell so user-installed sandbox tools resolve.
+        const inner = `umask 077; cd ${JSON.stringify(containerCwd(cwd, sb.workspaceRoot))} && ${command}`;
         const res = await run(["docker", "exec", "omp-strix-sandbox", "bash", "-lc", inner], {
           timeoutS,
           signal,
@@ -687,20 +690,15 @@ export function strixBash(pi: ExtensionAPI) {
         };
       }
 
-      // Host path: no sandbox, or the agent deliberately issued a docker command.
+      // Explicit unsandboxed mode only; startup errors never execute here.
       const res = await run(["bash", "-c", command], { cwd, timeoutS, signal });
       const bounded = boundOutput(res.output, res.timedOut, timeoutS);
-      const warn = startErr
-        ? `[strix] sandbox unavailable (${startErr}) — ran on host.\n`
-        : sandboxRoot()
-          ? "[strix] sandbox armed but not recorded — ran on host. Report this.\n"
-          : "";
       const hint =
         res.code !== 0
           ? (missingToolHint(res.output) ?? classifyToolError(res.output, res.code, res.timedOut))
           : "";
       return {
-        content: [{ type: "text", text: warn + bounded.text + hint }],
+        content: [{ type: "text", text: bounded.text + hint }],
         details: {
           exitCode: res.code,
           timedOut: res.timedOut,

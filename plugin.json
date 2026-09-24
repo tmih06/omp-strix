@@ -1,6 +1,6 @@
 {
   "name": "omp-strix",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "description": "Strix adversarial security-testing mode for omp",
   "extensions": ["./src/index.ts"]
 }

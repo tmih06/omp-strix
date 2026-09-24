@@ -105,8 +105,6 @@ export interface PromptOptions {
   scanMode?: string;
   isWhitebox?: boolean;
   isDiffScoped?: boolean;
-  /** Whether bash runs inside the docker sandbox; false = direct host execution. */
-  sandbox?: boolean;
 }
 
 /** Internal skills inlined for the root agent, mirroring prompt.py's ordered list. */
@@ -161,21 +159,13 @@ export function buildSystemPrompt(opts: PromptOptions): string {
     .map((s) => `<${s.name}>\n${s.body}\n</${s.name}>`)
     .join("\n");
   const catalog = availableSkillsCatalog();
-  const sandboxed = opts.sandbox !== false;
-  const isolationBlock = sandboxed
-    ? `AGENT ISOLATION & SANDBOXING:
-- All agents share one sandboxed execution environment: a dedicated microVM-style container (gVisor-isolated docker container) with the working directory mounted READ-ONLY at /workspace
-- Shell commands run inside the sandbox automatically — the bash tool is transparently routed there. NEVER wrap commands in 'docker exec' or 'docker run'; the bash tool already executes inside the container. File tools (read/write/edit/glob/grep) operate on the mounted workspace directly.
-- /workspace is READ-ONLY — the scan target's source cannot be modified, by design. All scratch work (clones, temp files, tool output, downloaded PoCs) goes in /scratch, which is writable and shared by all agents
-- Agents can see each other's /scratch files for better collaboration
-- Host-side execution tools (eval, browser, debug, computer) are DISABLED while the sandbox is on — all code execution goes through bash inside the container`
-    : `AGENT EXECUTION (NO SANDBOX — operator declined):
-- Shell commands run DIRECTLY on the host via the bash tool — there is no container isolation
-- Agents share the host working directory; file tools and bash see the same tree
-- Be conservative: no destructive commands, no writes outside the working directory, no package installs on the host`;
-  const environmentBlock = sandboxed
-    ? `Sandboxed Linux container (microVM-isolated via gVisor) with the working directory mounted read-only at /workspace and a writable shared scratch dir at /scratch. Install any additional tools/packages needed with package managers (apt, pip, npm, etc.) — the sandbox is disposable and yours to configure.`
-    : `Direct host execution — no container. The working directory is the project root. Do NOT install packages or modify the host; use only tools already present.`;
+  const isolationBlock = `AGENT ISOLATION & SANDBOXING:
+- All agents share one Docker container (default runc isolation) with the working directory bind-mounted read-only at /workspace
+- Execute shell commands with bash, terminal, or python: they route into the container. Use bash to browse source (e.g. find, sed, cat, rg) and to write scratch files; host-side read/write/edit/grep/glob/network/code-execution tools are disabled while sandboxed
+- /scratch is the writable shared directory mounted from ./.strix/scratch in the project; use it for clones, temp files, tool output, and downloaded PoCs. /workspace source files cannot be changed
+- The extension's scan notes and reports persist in ./.strix/scans on the host, outside the writable /scratch bind
+- Agents see each other's /scratch files; Docker has a separate bridge network namespace and no Docker socket, but host services reachable via the bridge are not a security boundary`;
+  const environmentBlock = `Sandboxed Docker container with read-only source at /workspace and shared writable /scratch mounted from ./.strix/scratch in the project. If needed, install user-space tools only under /scratch; the container runs without root privileges. Startup or routing failure stops execution rather than running on the host.`;
 
   return `You are an advanced AI application security validation agent. Your purpose is to perform authorized security verification, reproduce and validate weaknesses on in-scope assets, and help remediate real security issues.
 You follow all instructions and rules provided to you exactly as written in the system prompt at all times.
@@ -591,9 +581,7 @@ PERSISTENCE IS MANDATORY:
 <environment>
 ${environmentBlock}
 
-${
-  sandboxed
-    ? `RECONNAISSANCE & SCANNING:
+RECONNAISSANCE & SCANNING:
 - nmap, ncat, ndiff - Network mapping and port scanning
 - subfinder - Subdomain enumeration
 - naabu - Fast port scanner
@@ -635,13 +623,11 @@ SPECIALIZED TOOLS:
 PROGRAMMING:
 - Python 3, Node.js/npm
 - Full development environment inside the sandbox
-- You can install any additional tools/packages needed based on the task/context using package managers (apt, pip, npm, etc.)
+- Additional user-space tools belong under /scratch; system packages require an operator-built image
 
 Directories:
-- /workspace - the scan target's source, mounted READ-ONLY from the host working directory
-- /scratch - writable shared scratch: clones, temp files, tool output, PoCs`
-    : `Available tools: whatever is installed on the host (check with 'which <tool>' before relying on it). Python3 and standard POSIX utilities are usually present.`
-}
+- /workspace - target source, bind-mounted READ-ONLY from the host project directory
+- /scratch - shared writable scratch, mounted from ./.strix/scratch in the project
 </environment>
 
 <specialized_knowledge>

@@ -1,18 +1,19 @@
 /**
- * Sandboxed execution for strix mode — replaces strix's dedicated sandbox
- * image with a locally built one (sandbox/Dockerfile, essential pentest
- * tools preinstalled). STRIX_SANDBOX_IMAGE overrides the image name; when
- * set to anything other than the default it is pulled instead of built.
- *
- * While a scan is active, `bash` tool calls are rewritten to `docker exec`
- * into the container. The session cwd is mounted at /workspace so file
- * tools and shell commands see the same tree — same model as strix's
- * shared container. STRIX_SANDBOX=off disables sandboxing entirely.
+ * Shared strix execution container. The scan target is mounted read-only;
+ * only /scratch is writable. Startup and state recording fail closed.
  */
 
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,9 +21,37 @@ const NAME = "omp-strix-sandbox";
 export const WORKSPACE = "/workspace";
 export const SCRATCH = "/scratch";
 const DEFAULT_IMAGE = "ghcr.io/tmih06/omp-strix-sandbox:latest";
-const STATE_DIR = join(homedir(), ".omp", "agent", "strix");
-const ACTIVE_FILE = join(STATE_DIR, "active.json");
-const SCRATCH_DIR = join(STATE_DIR, "scratch");
+function hostUid(): number {
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("Docker sandbox requires a POSIX user identity");
+  return uid;
+}
+function hostIdentity(): string {
+  const gid = process.getgid?.();
+  if (gid === undefined) throw new Error("Docker sandbox requires a POSIX group identity");
+  return `${hostUid()}:${gid}`;
+}
+/** All mounted host directories and scan artifacts live under the project. */
+function privateDirectory(dir: string): string {
+  if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
+  const stat = lstatSync(dir);
+  if (!stat.isDirectory() || stat.uid !== hostUid() || (stat.mode & 0o077) !== 0) {
+    throw new Error(`${dir} must be a private, owner-owned directory (mode 0700)`);
+  }
+  return dir;
+}
+
+export function localStateRoot(root: string): string {
+  const dir = privateDirectory(join(realpathSync(root), ".strix"));
+  const ignore = join(dir, ".gitignore");
+  if (!existsSync(ignore)) writeFileSync(ignore, "*\n", { mode: 0o600, flag: "wx" });
+  return dir;
+}
+const scratchDir = (root: string) => join(localStateRoot(root), "scratch");
+const activeFile = (root: string) => join(localStateRoot(root), "sandbox.json");
+function ensureScratchDir(root: string): string {
+  return privateDirectory(scratchDir(root));
+}
 const DOCKERFILE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "sandbox");
 
 export function sandboxImage(): string {
@@ -229,15 +258,9 @@ export function buildImage(
 export async function ensureSandbox(cwd: string, onProgress?: (msg: string) => void): Promise<string | null> {
   const image = sandboxImage();
   if (await containerRunning()) {
-    // A surviving container may still mount a previous session's cwd —
-    // verify the bind source matches before reusing it.
-    const mounts = await run([
-      "inspect",
-      "-f",
-      "{{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}",
-      NAME,
-    ]);
-    if (mounts.stdout.includes(`${cwd}:${WORKSPACE}`)) {
+    // A surviving container may be user-created or from an older, unsafe
+    // configuration. Never trust its name without inspecting its mounts.
+    if (await containerIsolated(cwd)) {
       // Container is up — but check whether GHCR has a newer :latest.
       // Cheap digest compare (~1s); only pull when it actually differs.
       onProgress?.("checking for image updates…");
@@ -283,33 +306,43 @@ export async function ensureSandbox(cwd: string, onProgress?: (msg: string) => v
     // else: pull failed but a local image exists — use it (offline/stale ok).
   }
   onProgress?.("starting container…");
-  mkdirSync(SCRATCH_DIR, { recursive: true });
+  ensureScratchDir(cwd);
   const res = await run([
     "run",
     "-d",
     "--name",
     NAME,
+    "--user",
+    hostIdentity(),
+    "--cap-drop",
+    "ALL",
     "--cap-add",
     "NET_RAW",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "512",
     "--network",
-    "host",
-    // Container runs as root; the exec wrapper sets umask 000 so files it
-    // writes in /scratch are world-writable for the host user.
+    "bridge",
+    // Run as the host project owner so /scratch can stay private (0700);
+    // the container has no root capabilities or host-network namespace.
     // /workspace is mounted READ-ONLY — the scan target's source must not be
     // modified. Writable scratch (clones, temp files, tool output) goes to
-    // /scratch, a per-host dir under ~/.omp/agent/strix/scratch.
+    // /scratch, a dedicated directory in the project at ./.strix/scratch.
     "-e",
     `TMPDIR=${SCRATCH}/tmp`,
+    "-e",
+    `HOME=${SCRATCH}`,
     "-v",
     `${cwd}:${WORKSPACE}:ro`,
     "-v",
-    `${SCRATCH_DIR}:${SCRATCH}`,
+    `${scratchDir(cwd)}:${SCRATCH}`,
     "-w",
     WORKSPACE,
     image,
     "sh",
     "-c",
-    "umask 000; mkdir -p /scratch/tmp; exec sleep infinity",
+    "umask 077; mkdir -p /scratch/tmp; exec sleep infinity",
   ]);
   if (res.code !== 0) {
     return `docker run failed: ${res.stderr.trim() || res.stdout.trim()}`;
@@ -323,22 +356,26 @@ export async function stopSandbox(): Promise<void> {
 }
 
 // ── Lazy startup orchestration ────────────────────────────────────────────
-// Event handlers (tool_call) are killed after ~30s — a first-run image pull
-// exceeds that, and a timed-out handler drops its result so the call falls
-// through to HOST execution. Startup therefore lives in tool execute()
-// paths (bounded by the tool timeout): armSandbox() records intent at
-// activation, ensureSandboxRunning() does the work on first exec.
+// Image pulls happen in tool execute()/interactive command handlers, not
+// short-lived tool_call hooks. A failure must never execute the call on host.
 
 let desiredRoot: string | null = null;
+let contextRoot: string | null = null;
+/** Session cwd, including in independently initialized subagent runners. */
+export function setSandboxContext(root: string): void {
+  contextRoot = realpathSync(root);
+}
 let starting: Promise<string | null> | null = null;
 
 /** Arm lazy sandbox startup with `root` mounted at /workspace. */
 export function armSandbox(root: string): void {
-  if (desiredRoot !== root) starting = null;
-  desiredRoot = root;
+  const canonical = realpathSync(root);
+  contextRoot = canonical;
+  if (desiredRoot !== canonical) starting = null;
+  desiredRoot = canonical;
 }
 
-/** Disarm: subsequent execs run on the host; an in-flight start is orphaned. */
+/** Disarm the requested root; a persisted sandboxed scan can still deny host execs. */
 export function disarmSandbox(): void {
   desiredRoot = null;
   starting = null;
@@ -349,56 +386,99 @@ export function sandboxRoot(): string | null {
   return desiredRoot;
 }
 
-/**
- * Ensure the armed sandbox is running. Returns null on success or when
- * disarmed, an error string on failure (callers fall back to host exec).
- * Memoized: concurrent callers share one pull/run, and a container that
- * died mid-scan is recreated. Call from tool execute() — never a handler.
- */
+/** Verify actual isolation settings, not a matching container name. */
+async function containerIsolated(root: string): Promise<boolean> {
+  const res = await run([
+    "inspect",
+    "-f",
+    "{{json .Mounts}}|{{json .HostConfig}}|{{.State.Running}}|{{.Config.User}}",
+    NAME,
+  ]);
+  if (res.code !== 0) return false;
+  try {
+    const [mountsJson, configJson, running, user] = res.stdout.trim().split("|");
+    if (running !== "true" || user !== hostIdentity()) return false;
+    const mounts: unknown = JSON.parse(mountsJson);
+    const config: unknown = JSON.parse(configJson);
+    if (!Array.isArray(mounts) || mounts.length !== 2 || !config || typeof config !== "object") return false;
+    const hasMount = (source: string, destination: string, writable: boolean) =>
+      mounts.some(
+        (mount: unknown) =>
+          !!mount &&
+          typeof mount === "object" &&
+          "Source" in mount &&
+          mount.Source === source &&
+          "Destination" in mount &&
+          mount.Destination === destination &&
+          "RW" in mount &&
+          mount.RW === writable,
+      );
+    return (
+      hasMount(root, WORKSPACE, false) &&
+      hasMount(scratchDir(root), SCRATCH, true) &&
+      "NetworkMode" in config &&
+      config.NetworkMode === "bridge" &&
+      "Privileged" in config &&
+      config.Privileged === false &&
+      "CapDrop" in config &&
+      Array.isArray(config.CapDrop) &&
+      config.CapDrop.length === 1 &&
+      config.CapDrop[0] === "ALL" &&
+      "CapAdd" in config &&
+      Array.isArray(config.CapAdd) &&
+      config.CapAdd.length === 1 &&
+      config.CapAdd[0] === "CAP_NET_RAW" &&
+      "SecurityOpt" in config &&
+      Array.isArray(config.SecurityOpt) &&
+      config.SecurityOpt.length === 1 &&
+      config.SecurityOpt[0] === "no-new-privileges" &&
+      "PidMode" in config &&
+      config.PidMode !== "host" &&
+      "IpcMode" in config &&
+      config.IpcMode !== "host" &&
+      "Devices" in config &&
+      Array.isArray(config.Devices) &&
+      config.Devices.length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Start and verify the sandbox; child runners read the parent's state. */
 export function ensureSandboxRunning(onProgress?: (msg: string) => void): Promise<string | null> {
-  const root = desiredRoot;
+  const root = desiredRoot ?? activeSandbox()?.workspaceRoot;
   if (!root) return Promise.resolve(null);
   starting ??= (async () => {
     if (!(await dockerAvailable())) return "docker not available";
     const err = await ensureSandbox(root, onProgress);
-    if (!err) {
-      recordSandbox(root);
-      markSandboxActive(true);
-    }
-    return err;
-  })();
+    if (err) return err;
+    recordSandbox(root);
+    return null;
+  })().catch((e) => `sandbox startup failed: ${String(e)}`);
   return starting.then(async (err) => {
     if (err) return err;
-    if (desiredRoot !== root) {
-      await stopSandbox(); // disarmed mid-start — clean up orphaned container
-      return null;
-    }
-    // The container can die mid-scan (OOM, manual rm, a subagent's own
-    // docker call). Recreate it so execs never hit a dead name.
-    if (!(await containerRunning())) {
+    if (desiredRoot && desiredRoot !== root) return "sandbox root changed";
+    if (!(await containerIsolated(root))) {
       const restartErr = await ensureSandbox(root, onProgress);
-      if (restartErr) return restartErr;
+      if (restartErr || !(await containerIsolated(root)))
+        return restartErr ?? "container isolation check failed";
       recordSandbox(root);
-      markSandboxActive(true);
     }
     return null;
   });
 }
 
 export function markSandboxActive(on: boolean): void {
-  try {
-    let active: Record<string, unknown> = {};
-    try {
-      active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
-    } catch {
-      /* file missing — create it below */
-    }
-    active.sandbox = on;
-    mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
-  } catch {
-    /* state dir unwritable */
+  const root = desiredRoot ?? contextRoot ?? process.cwd();
+  if (!on) {
+    const state = join(root, ".strix");
+    if (!existsSync(state)) return;
+    // Verify the parent before removing the marker; never follow a symlink.
+    rmSync(join(localStateRoot(root), "sandbox.json"), { force: true });
+    return;
   }
+  recordSandbox(root);
 }
 
 interface ActiveSandbox {
@@ -407,90 +487,30 @@ interface ActiveSandbox {
 
 export function activeSandbox(): ActiveSandbox | null {
   try {
-    const active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as {
-      sandbox?: boolean;
-      workspaceRoot?: string;
-    };
-    if (!active.sandbox) return null;
-    return { workspaceRoot: active.workspaceRoot ?? "" };
+    const root = desiredRoot ?? contextRoot ?? realpathSync(process.cwd());
+    const file = join(root, ".strix", "sandbox.json");
+    if (!lstatSync(file).isFile()) return null;
+    localStateRoot(root);
+    const active: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (
+      !active ||
+      typeof active !== "object" ||
+      !("sandbox" in active) ||
+      active.sandbox !== true ||
+      !("workspaceRoot" in active) ||
+      active.workspaceRoot !== root
+    )
+      return null;
+    return { workspaceRoot: root };
   } catch {
     return null;
   }
 }
 
 export function recordSandbox(workspaceRoot: string): void {
-  try {
-    let active: Record<string, unknown> = {};
-    try {
-      active = JSON.parse(readFileSync(ACTIVE_FILE, "utf8")) as Record<string, unknown>;
-    } catch {
-      /* file missing — create it below */
-    }
-    active.sandbox = true;
-    active.workspaceRoot = workspaceRoot;
-    mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
-  } catch {
-    /* state dir unwritable */
-  }
-}
-
-/**
- * Rewrite a bash tool call that directly invokes `docker exec` on the
- * sandbox (subagents sometimes bypass the routing): inject umask so files
- * stay host-writable. Plain commands need no rewrite — the shadow bash
- * tool executes them inside the container itself. Returns the new input
- * object, or null when the call shouldn't be rewritten.
- */
-export function rewriteBashInput(input: Record<string, unknown>): Record<string, unknown> | null {
-  if (!sandboxRoot()) return null;
-  const command = input.command;
-  if (typeof command !== "string" || command.trim() === "") return null;
-  const directExec = command.match(/docker\s+exec\s+(?:-\S+\s+)*omp-strix-sandbox\s+sh\s+-c\s+'/);
-  if (!directExec || command.includes("umask")) return null;
-  const out: Record<string, unknown> = {
-    ...input,
-    command: command.replace(directExec[0], `${directExec[0]}umask 000; `),
-  };
-  delete out.cwd;
-  return out;
-}
-
-/**
- * Rewrite a file-tool call's `path` arg so container paths map to host paths:
- * `/workspace/...` → the mounted project root (read-only in-container), and
- * `/scratch/...` → the shared writable scratch dir. Returns the new input
- * object, or null when nothing needs rewriting.
- */
-export function rewritePathInput(input: Record<string, unknown>): Record<string, unknown> | null {
-  const root = sandboxRoot();
-  if (!root) return null;
-  const path = input.path;
-  if (typeof path !== "string") return null;
-  if (path === WORKSPACE || path.startsWith(`${WORKSPACE}/`)) {
-    return { ...input, path: join(root, path.slice(WORKSPACE.length)) };
-  }
-  if (path === SCRATCH || path.startsWith(`${SCRATCH}/`)) {
-    return { ...input, path: join(SCRATCH_DIR, path.slice(SCRATCH.length)) };
-  }
-  return null;
-}
-
-/**
- * True when a file-tool `path` arg targets the mounted workspace — i.e. the
- * scan target's source tree. Used to block mutating tools (write/edit):
- * the mount is read-only in-container, but file tools run on the host and
- * would bypass it.
- */
-export function isWorkspacePath(path: unknown): boolean {
-  if (typeof path !== "string" || path.trim() === "") return false;
-  const root = sandboxRoot();
-  if (!root) return false;
-  const resolved = path.startsWith("/")
-    ? path === WORKSPACE || path.startsWith(`${WORKSPACE}/`)
-      ? join(root, path.slice(WORKSPACE.length))
-      : path
-    : join(root, path);
-  const norm = resolved.replace(/\/+$/, "");
-  return norm === root || norm.startsWith(`${root}/`);
+  const file = activeFile(workspaceRoot);
+  localStateRoot(workspaceRoot);
+  const tmp = `${file}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify({ sandbox: true, workspaceRoot }), { mode: 0o600 });
+  renameSync(tmp, file);
 }

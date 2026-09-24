@@ -1,6 +1,6 @@
 ---
 name: agent_browser
-description: agent-browser CLI for headless Chrome via shell. Snapshot-and-ref workflow, click/fill/extract, screenshots, multi-tab, multi-session, network mocking. Pre-installed in the sandbox; invoke via exec_command.
+description: Optional in-container agent-browser CLI workflow for sites requiring JavaScript. Check availability before use; the default sandbox image has no browser.
 ---
 
 
@@ -11,12 +11,11 @@ Playwright or Puppeteer dependency. Accessibility-tree snapshots with compact
 `@eN` refs let agents interact with pages in ~200-400 tokens instead of
 parsing raw HTML.
 
-Pre-installed in the sandbox image. Always invoke via the
-``exec_command`` shell tool. The Caido HTTP/HTTPS proxy is already
-wired via ``http_proxy`` / ``https_proxy`` env vars — **do not pass
-``--proxy``**; agent-browser picks it up automatically and Caido
-captures all page traffic. Localhost (CDP) traffic is excluded via
-``NO_PROXY=localhost,127.0.0.1``.
+This workflow is available only if both `agent-browser` and a compatible
+browser are installed **inside the sandbox**. The default image does not
+include them. Check with `command -v agent-browser` and `agent-browser doctor`
+through the `bash` tool; never launch a host browser or bypass the sandbox.
+No proxy is preconfigured. Keep browser profiles and caches under `/scratch`.
 
 Default viewport is 1280×720. For sites that gate behavior on real
 desktop dimensions (responsive breakpoints, bot fingerprinting), run
@@ -260,44 +259,16 @@ only for simple expressions.
 
 ### Screenshot
 
-`agent-browser screenshot` writes a PNG to disk in the sandbox. The
-shell command alone does **not** put the image into your context —
-chain it with the SDK ``view_image`` tool to actually see it:
+The sandbox has no host-side `view_image` tool. If an in-container browser is
+available and an operator needs an image artifact, save it under `/scratch`:
 
 ```bash
-exec_command:  agent-browser screenshot
-view_image:    {"path": "<path printed on stdout>"}
+agent-browser screenshot /scratch/page.png
 ```
 
-Default output directory is ``/workspace/.agent-browser-screenshots/``,
-which ``view_image`` can read. Prefer the no-arg form (the CLI prints
-the full path on stdout — pass that to ``view_image``). If you need a
-specific filename, keep it inside that directory or a sibling hidden
-dir under ``/workspace``. Never write screenshots to ``/tmp`` —
-``view_image`` rejects anything outside the workspace root.
-
-```bash
-agent-browser screenshot                        # path printed on stdout
-agent-browser screenshot /workspace/.agent-browser-screenshots/page.png
-agent-browser screenshot --full                 # full scroll height
-agent-browser screenshot --annotate             # numbered labels + legend keyed to snapshot refs
-```
-
-`--annotate` is designed for multimodal models: each label `[N]` maps
-to ref `@eN`. Take the annotated screenshot, then ``view_image`` it,
-and you can correlate visual layout with snapshot refs.
-
-Snapshots (`snapshot -i`) give you a compact text view that costs ~200-400
-tokens; screenshots cost more. Use `snapshot` first; reach for
-`screenshot + view_image` only when you actually need pixels (visual
-layout questions, captchas, custom widgets where the accessibility
-tree is incomplete).
-
-If ``view_image`` errors back at you (rejected image, "vision not
-supported", or similar), you are running on a text-only model — stop
-calling it and stop taking screenshots. Drive the page entirely from
-`snapshot -i` refs, `eval` for any DOM/JS state you need to read, and
-`text @ref` / `get text` for content extraction.
+The shell prints the path, not the pixels. Use `snapshot -i`, `text @ref`,
+`get text`, or in-browser DOM evaluation for information the agent must inspect.
+Do not write to `/workspace` (read-only), and do not call a host image tool.
 
 ### Handle multiple pages via tabs
 
@@ -411,9 +382,8 @@ load` if you were logged in. Distinguish the failure modes and react differently
 - **Malformed command** (`Unknown command`, `Ref not found`, bad flag): fix the
   command itself — re-snapshot for fresh refs, or correct the syntax.
 
-Invoke `agent-browser` directly through `exec_command`; there is no need to wrap
-it in an extra `sh -c "..."` / `bash -lc "..."` layer, which only adds shell
-quoting and startup-file pitfalls.
+Invoke `agent-browser` through the sandboxed `bash` tool; do not launch an
+independent host terminal or browser process.
 
 ## Diagnosing install issues
 

@@ -6,28 +6,30 @@
  * theme is applied, and the status line's `path`/`git`/`pr` segments are
  * hidden (runtime-only settings override — nothing persisted). The operator
  * names the target and depth in conversation; the first prompt after
- * activation is captured as the scan target and starts
- * the scan record. The sandbox container spins up when the user accepts
- * the sandbox prompt (progress bar in the status line).
- * call. `/strix` again (or session shutdown) ends the mode — finish_scan
- * closes the scan but keeps the mode on so the user can discuss findings.
+ * activation is captured as the scan target and starts the scan record.
+ * The docker sandbox is mandatory: activation arms and verifies the
+ * container (progress in a widget below the editor, never the status line)
+ * and refuses to activate when it cannot start or when STRIX_SANDBOX=off —
+ * agent commands never run on the host. `/strix` again (or session
+ * shutdown) ends the mode — finish_scan closes the scan but keeps the mode
+ * on so the user can discuss findings.
  */
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { strixBash } from "./bash-tool";
 import { PLUGIN_ROOT } from "./paths";
 import { buildSystemPrompt } from "./prompt";
 import {
+  activeSandbox,
   armSandbox,
   disarmSandbox,
   ensureSandboxRunning,
-  isWorkspacePath,
   markSandboxActive,
-  rewriteBashInput,
-  rewritePathInput,
+  sandboxRoot,
+  setSandboxContext,
   stopSandbox,
 } from "./sandbox";
 import {
@@ -48,8 +50,6 @@ interface StrixState {
   preTools: string[] | null;
   /** Set once the first post-activation prompt has been captured as target. */
   scanStarted: boolean;
-  /** Whether bash is routed into the container this activation. */
-  sandboxEnabled: boolean;
   /**
    * Session id that ran /strix. Subagent sessions get their own
    * ExtensionRunner and emit session_start/before_agent_start/session_shutdown
@@ -66,7 +66,6 @@ const strix: StrixState = {
   systemPrompt: null,
   preTools: null,
   scanStarted: false,
-  sandboxEnabled: true,
   ownerSessionId: null,
   prevTheme: null,
 };
@@ -289,6 +288,32 @@ function restoreStatusLine(pi: ExtensionAPI): void {
   resyncStatusLine(s);
 }
 
+// ── Sandbox progress widget ──────────────────────────────────────────────
+// Image check/pull/build and container startup can take minutes on first
+// run. Progress renders in a dedicated widget BELOW the editor — never in
+// the status line, which stays a steady "◆ STRIX". The widget is cleared on
+// success, failure, /strix off, and session shutdown.
+const PROGRESS_WIDGET_KEY = "strix_image_progress";
+const PROGRESS_WIDGET_LABEL = "◆ STRIX — sandbox setup";
+
+function showSandboxProgress(ctx: ExtensionContext, msg: string): void {
+  try {
+    ctx.ui.setWidget?.(PROGRESS_WIDGET_KEY, [PROGRESS_WIDGET_LABEL, `  ${msg}`], {
+      placement: "belowEditor",
+    });
+  } catch {
+    /* no UI */
+  }
+}
+
+function clearSandboxProgress(ctx: ExtensionContext): void {
+  try {
+    ctx.ui.setWidget?.(PROGRESS_WIDGET_KEY, undefined);
+  } catch {
+    /* no UI */
+  }
+}
+
 /** Copy the bundled theme into the agent themes dir so setTheme can find it. */
 function installTheme(): void {
   try {
@@ -300,14 +325,16 @@ function installTheme(): void {
   }
 }
 
-async function deactivate(
-  pi: ExtensionAPI,
-  ctx: { ui: { notify(m: string, l?: string): void } },
-): Promise<void> {
+async function deactivate(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   strix.active = false;
   restoreStatusLine(pi);
+  clearSandboxProgress(ctx);
+  try {
+    markSandboxActive(false);
+  } catch (e) {
+    ctx.ui.notify(`Could not clear sandbox marker: ${String(e)}`, "error");
+  }
   disarmSandbox();
-  strix.sandboxEnabled = true;
   strix.systemPrompt = null;
   strix.scanStarted = false;
   strix.ownerSessionId = null;
@@ -324,25 +351,27 @@ async function deactivate(
   // Restore the pre-strix theme (captured as a Theme object at activation).
   if (strix.prevTheme) {
     try {
-      await (ctx.ui as { setTheme?: (t: unknown) => Promise<unknown> }).setTheme?.(strix.prevTheme);
+      await ctx.ui.setTheme?.(strix.prevTheme);
     } catch {
       /* theme restore is best-effort */
     }
     strix.prevTheme = null;
   }
-  endScan();
   try {
-    (ctx as { ui?: { setStatus?(k: string, t: string): void } }).ui?.setStatus?.("strix_mode", "");
+    endScan();
+  } catch (e) {
+    ctx.ui.notify(`Could not finalize scan state: ${String(e)}`, "error");
+  }
+  try {
+    ctx.ui.setStatus?.("strix_mode", "");
   } catch {
     /* no UI */
   }
-  markSandboxActive(false);
   await stopSandbox();
   ctx.ui.notify("Strix mode off.", "info");
 }
 
 export default function (pi: ExtensionAPI) {
-  installTheme();
   // Register the strix toolset up front, inactive — /strix (or a strix-*
   // subagent's tools list) activates them by name.
   // Shadow the builtin bash: the transcript shows the agent's original
@@ -352,28 +381,30 @@ export default function (pi: ExtensionAPI) {
   for (const tool of STRIX_TOOLS) {
     pi.registerTool({ ...tool, defaultInactive: true });
   }
+  pi.on("session_start", (_event, ctx) => {
+    const root = sandboxRoot() ?? ctx.cwd ?? process.cwd();
+    setProjectDir(root);
+    setSandboxContext(root);
+  });
   pi.registerCommand("strix", {
     description:
-      "Toggle strix security-testing mode. `/strix <target> [depth]` starts the scan immediately; bare `/strix` waits for the target in chat. Off: restores tools and stops the sandbox.",
+      "Toggle strix security-testing mode (docker sandbox required — commands never run on the host). `/strix <target> [depth]` starts the scan immediately; bare `/strix` waits for the target in chat. Off: restores tools and stops the sandbox.",
     handler: async (args, ctx) => {
       if (strix.active) {
         await deactivate(pi, ctx);
         return;
       }
 
-      // Ask whether to run commands inside the docker sandbox. Declining
-      // skips the image pull entirely — bash runs on the host.
-      // STRIX_SANDBOX=off skips the prompt entirely (README contract).
-      let sandbox = process.env.STRIX_SANDBOX !== "off";
-      if (sandbox && ctx.hasUI && ctx.ui.confirm) {
-        try {
-          sandbox = await ctx.ui.confirm(
-            "Strix sandbox",
-            "Run shell commands inside a disposable docker container (pulls ghcr.io/tmih06/omp-strix-sandbox on first use)? Decline to run directly on the host.",
-          );
-        } catch {
-          sandbox = true;
-        }
+      // The docker sandbox is mandatory — agent-triggered commands must
+      // never run on the host. STRIX_SANDBOX=off is a hard refusal, not a
+      // host opt-out: reject before any side effects (theme, status line,
+      // image pull, tool activation).
+      if (process.env.STRIX_SANDBOX === "off") {
+        ctx.ui.notify(
+          "Strix requires the docker sandbox but STRIX_SANDBOX=off is set. Unset it to activate — commands never run on the host.",
+          "error",
+        );
+        return;
       }
       installTheme();
       const tui = pi.pi;
@@ -391,39 +422,50 @@ export default function (pi: ExtensionAPI) {
       pi.setSessionName("strix");
       applyStrixStatusLine(pi);
 
-      if (sandbox) {
-        armSandbox(ctx.cwd ?? process.cwd());
-        // Eager startup on user acceptance: pull, update-check, and container
-        // creation run here with a live status-bar progress bar. Command
-        // handlers are interactive and not subject to the 30s event timeout.
-        ctx.ui.setStatus?.("strix_mode", "◆ STRIX · checking for updates…");
-        const onProgress = (msg: string) => {
-          ctx.ui.setStatus?.("strix_mode", `◆ STRIX · ${msg}`);
-        };
-        const err = await ensureSandboxRunning(onProgress);
-        if (err) {
-          ctx.ui.notify(`Sandbox failed to start (${err}) — running unsandboxed on host.`, "warning");
-          strix.sandboxEnabled = false;
-          disarmSandbox();
-        } else {
-          ctx.ui.notify("Sandbox container ready.", "info");
+      // Arm and verify the container before any strix tool can run: image
+      // check/pull/build and container creation happen here, with progress
+      // in a widget below the editor — never in the status line. Command
+      // handlers are interactive and not subject to the 30s event timeout.
+      armSandbox(ctx.cwd ?? process.cwd());
+      showSandboxProgress(ctx, "checking docker…");
+      const onProgress = (msg: string) => showSandboxProgress(ctx, msg);
+      const err = await ensureSandboxRunning(onProgress).catch((e) => String(e));
+      if (err || !activeSandbox()) {
+        // Never turn a failed sandbox into an unsandboxed scan.
+        ctx.ui.notify(
+          `Sandbox failed to start (${err ?? "state not recorded"}). Strix not activated.`,
+          "error",
+        );
+        try {
+          markSandboxActive(false);
+        } catch {
+          /* malformed .strix dir: keep the scan disabled */
         }
-      } else {
         disarmSandbox();
+        await stopSandbox();
+        clearSandboxProgress(ctx);
+        ctx.ui.setStatus?.("strix_mode", "");
+        restoreStatusLine(pi);
+        if (strix.prevTheme) {
+          await ctx.ui.setTheme?.(strix.prevTheme);
+          strix.prevTheme = null;
+        }
+        return;
       }
+      clearSandboxProgress(ctx);
+      ctx.ui.notify("Sandbox container ready.", "info");
 
       ctx.ui.setStatus?.("strix_mode", "◆ STRIX");
-      strix.systemPrompt = buildSystemPrompt({ sandbox: strix.sandboxEnabled });
+      strix.systemPrompt = buildSystemPrompt({});
       const preTools = pi.getActiveTools();
       strix.preTools = preTools;
-      // Strip `goal` from the active set: goal mode injects a continuation
-      // steer on every turn end, which forces the agent to keep polling
-      // instead of sleeping until subagent completions arrive.
-      await pi.setActiveTools([...preTools.filter((t) => t !== "goal"), ...TOOL_NAMES]);
+      // Retain only sandbox-approved orchestration tools. The hook below
+      // also blocks unavailable/hidden tools requested by name.
+      const activeTools = preTools.filter((t) => SANDBOX_TOOLS.has(t));
+      await pi.setActiveTools([...new Set([...activeTools, ...TOOL_NAMES])]);
       strix.active = true;
       strix.ownerSessionId = eventSessionId(ctx);
-      // Root the scan store at this project's cwd — parallel scans in other
-      // repos get their own strix/ tree and never see each other's state.
+      // Scan artifacts and both bind sources are rooted in ./.strix.
       setProjectDir(ctx.cwd ?? process.cwd());
       // the builtin cost segment. Refreshed on an interval; cleared on
       // session_shutdown by the runner's managed timers.
@@ -457,10 +499,8 @@ export default function (pi: ExtensionAPI) {
       const target = args.trim();
       ctx.ui.notify(
         target
-          ? `Strix mode on${strix.sandboxEnabled ? " (sandboxed)" : " (NO sandbox — host exec)"} — starting scan on: ${target}`
-          : strix.sandboxEnabled
-            ? "Strix mode on (sandboxed). Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit."
-            : "Strix mode on (NO sandbox — commands run on the host). Name the target and depth in your next message. /strix again to exit.",
+          ? `Strix mode on (sandboxed) — starting scan on: ${target}`
+          : "Strix mode on (sandboxed). Name the target and depth (quick / standard / deep) in your next message — the scan starts there. /strix again to exit.",
         "info",
       );
       // Args become the first prompt: before_agent_start captures it as the
@@ -482,25 +522,35 @@ export default function (pi: ExtensionAPI) {
       // a scan dir without ended.json means the last session never closed
       // it. Reuse the dir so notes/coverage/reports accumulate in place.
       const prior = resumableScan();
-      if (prior) {
+      // Only a sandboxed scan may resume — a host-mode scan record is never
+      // continued, it is replaced by a fresh sandboxed scan.
+      if (prior?.sandboxed === true) {
         pi.setSessionName(`strix: ${prior.target.slice(0, 60)}`);
+        const artifacts = `/workspace/.strix/scans/${prior.scanId}`;
         return {
           systemPrompt: strix.systemPrompt,
-          message: `[strix] Resuming interrupted scan ${prior.scanId} of "${prior.target}" (started ${prior.startedAt}). Prior artifacts are in ${prior.dir} — read notes/, coverage/, reports/ and threat-models/ there before re-running work.`,
+          message: `[strix] Resuming interrupted scan ${prior.scanId} of "${prior.target}" (started ${prior.startedAt}). Prior artifacts are in ${artifacts} — read notes/, coverage/, reports/ and threat-models/ there before re-running work.`,
         };
       }
       const target = event.prompt?.trim() || "unspecified";
-      beginScan(target, "conversation");
+      beginScan(target, "conversation", true);
       pi.setSessionName(`strix: ${target.slice(0, 60)}`);
     }
     return { systemPrompt: strix.systemPrompt };
   });
 
-  // Tools that execute code on the HOST, bypassing the container: eval runs
-  // Python/JS in-process, computer/debug drive host programs, and browser's
-  // tab.run has full Bun/Node access. When the sandbox is on, block them —
-  // otherwise an agent can escape isolation without touching bash.
-  const HOST_EXEC_TOOLS = new Set(["eval", "computer", "debug", "browser"]);
+  // Only explicitly reviewed tool implementations may run while sandboxed.
+  // Native file/network/MCP/eval tools run on the host, even for read-only
+  // calls; an unrecognized plugin tool must not become a new escape hatch.
+  const SANDBOX_TOOLS = new Set([...TOOL_NAMES, "bash", "task", "wait", "todo", "ask"]);
+  const SANDBOX_AGENTS: Record<string, true> = {
+    "strix-recon": true,
+    "strix-hunter": true,
+    "strix-validator": true,
+    "strix-reporter": true,
+    "strix-privesc": true,
+    "strix-pivot": true,
+  };
 
   // Dangerous-command guardrail (CAI-style): block destructive/exfiltrating
   // commands even inside the sandbox — a pentest agent should never need
@@ -521,66 +571,69 @@ export default function (pi: ExtensionAPI) {
     { pattern: /\bbase64\s+(-d|--decode)\b.*\|\s*(ba)?sh\b/, reason: "Base64 decode-and-pipe to shell" },
   ];
 
-  // Guardrails + path rewrites for tool calls while strix mode is on.
-  // MUST stay synchronous-fast: omp kills handlers after 30s, so sandbox
-  // startup (image pull) lives in the tools' execute() paths instead —
-  // see ensureSandboxRunning() in sandbox.ts.
-  pi.on("tool_call", async (event) => {
-    if (!strix.active || !strix.sandboxEnabled) return;
-    if (HOST_EXEC_TOOLS.has(event.toolName)) {
+  // This guard also runs in subagent extension runners: their local `strix`
+  // flag can be false while the owning session's sandbox is active.
+  pi.on("tool_call", (event) => {
+    if (!(sandboxRoot() || activeSandbox() || activeScan()?.sandboxed)) return;
+    if (!SANDBOX_TOOLS.has(event.toolName)) {
       return {
         block: true,
         reason:
-          "strix sandbox is on — host-side code execution is disabled. Run it through the bash tool instead; commands execute inside the container.",
+          "strix sandbox is on: host-side tools are disabled. Read source and write scratch through bash inside the container (/workspace is read-only; /scratch is writable).",
       };
     }
-    // Command-safety guardrail — applies to every bash call while strix is on.
+    if (event.toolName === "task") {
+      const tasks = event.input?.tasks;
+      if (
+        !Array.isArray(tasks) ||
+        tasks.length === 0 ||
+        tasks.some(
+          (task: unknown) =>
+            !task ||
+            typeof task !== "object" ||
+            !("agent" in task) ||
+            typeof task.agent !== "string" ||
+            !Object.hasOwn(SANDBOX_AGENTS, task.agent) ||
+            ("tools" in task && task.tools !== undefined),
+        )
+      ) {
+        return {
+          block: true,
+          reason: "Sandboxed scans can spawn only strix-* specialist agents with their fixed tool lists.",
+        };
+      }
+    }
     if (event.toolName === "bash") {
-      const cmd = String((event.input as Record<string, unknown>)?.command ?? "");
+      const cmd = String(event.input?.command ?? "");
       for (const { pattern, reason } of DANGEROUS_COMMANDS) {
         if (pattern.test(cmd)) {
           return { block: true, reason: `Blocked by strix safety guardrail: ${reason}` };
         }
       }
-      // Only direct `docker exec` calls need rewriting (umask injection);
-      // plain commands are executed in-container by the shadow bash tool.
-      const rewritten = rewriteBashInput(event.input as Record<string, unknown>);
-      if (rewritten) return { input: rewritten };
-      return;
     }
-    // Mutating file tools run on the host — the read-only /workspace mount
-    // does not stop them, so block writes into the scan target's tree here.
-    if (
-      (event.toolName === "write" || event.toolName === "edit") &&
-      isWorkspacePath((event.input as Record<string, unknown>)?.path)
-    ) {
-      return {
-        block: true,
-        reason:
-          "strix mounts the target read-only — writes to /workspace are blocked. Put scratch files in /scratch; deliver patches via the report's fix fields.",
-      };
-    }
-    // File tools (write/read/grep/glob/edit) run on the host — map the
-    // container's /workspace and /scratch prefixes onto the mounted host
-    // dirs so agents can use the paths the prompt shows them.
-    const rewritten = rewritePathInput(event.input as Record<string, unknown>);
-    if (rewritten) return { input: rewritten };
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
     // Subagent sessions emit this on their own runner — only the session
     // that ran /strix may tear the scan down.
-    if (strix.ownerSessionId && eventSessionId(ctx) !== strix.ownerSessionId) return;
-    if (strix.active || activeScan()) {
-      strix.active = false;
-      strix.scanStarted = false;
-      // Rotate active.json aside — otherwise scanDir()'s .last fallback lets
-      // the next session's tools write into this dead scan.
+    if (!strix.active || !strix.ownerSessionId || eventSessionId(ctx) !== strix.ownerSessionId) return;
+    strix.active = false;
+    strix.scanStarted = false;
+    // Rotate active.json aside — otherwise scanDir()'s .last fallback lets
+    // the next session's tools write into this dead scan.
+    try {
       endScan();
-      markSandboxActive(false);
-      disarmSandbox();
-      // Shutdown handlers get ~2s — docker rm can outlast that; don't await.
-      void stopSandbox();
+    } catch {
+      /* always tear down the container, even if scan state is damaged */
     }
+    try {
+      markSandboxActive(false);
+    } catch {
+      /* marker may remain: subsequent agents will fail closed */
+    }
+    disarmSandbox();
+    clearSandboxProgress(ctx);
+    // Shutdown handlers get ~2s — docker rm can outlast that; don't await.
+    void stopSandbox();
   });
 }

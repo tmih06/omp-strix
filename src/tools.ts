@@ -6,11 +6,11 @@
  */
 
 import type { ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { boundOutput, run, runSandboxed, spawnSandboxed } from "./bash-tool";
+import { boundOutput, runSandboxed, spawnSandboxed } from "./bash-tool";
 import { cvssBaseScore } from "./cvss";
-import { PLUGIN_ROOT } from "./paths";
 import { listSkills, loadSkillBody } from "./prompt";
 import type { DegradationReason, PlanTask, Report } from "./state";
 import {
@@ -854,11 +854,14 @@ function findFuzzyDuplicate(
 async function checkEvidenceGrounding(dir: string, evidence: string): Promise<boolean> {
   const rawDir = join(dir, "raw-output");
   if (!existsSync(rawDir)) return true; // no outputs yet — can't verify
+  if (!lstatSync(rawDir).isDirectory()) return false;
   const files = readdirSync(rawDir).slice(-20); // last 20 outputs
   const excerptLen = 20;
   for (const file of files) {
     try {
-      const content = readFileSync(join(rawDir, file), "utf8");
+      const rawFile = join(rawDir, file);
+      if (!lstatSync(rawFile).isFile()) continue;
+      const content = readFileSync(rawFile, "utf8");
       // Check if any 20-char substring of evidence appears in the output.
       for (let i = 0; i <= evidence.length - excerptLen; i++) {
         const excerpt = evidence.slice(i, i + excerptLen);
@@ -1874,6 +1877,95 @@ const SSRF_BLOCKED = [
   /^https?:\/\/100\.100\.2\.136/i, // Alibaba metadata
   /^https?:\/\/(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.0\.0\.0|localhost|\[::1\])/i,
 ];
+interface SandboxFetchResult {
+  status: number;
+  finalUrl: string;
+  contentType: string;
+  /** Bytes downloaded (curl size_download) — exact even when body is capped. */
+  sizeDownload: number;
+  timeMs: number;
+  body: string;
+}
+
+/**
+ * Fetch `url` with curl inside the sandbox container — the ONLY network path
+ * for strix tools. runSandboxed is fail-closed, so a missing marker, failed
+ * startup, or unarmed session throws instead of touching the host network.
+ * The script is base64-wrapped because runSandboxed embeds argv
+ * double-quoted into an outer `bash -lc` (which would expand $vars); output
+ * sections are delimited by a random nonce so untrusted body content cannot
+ * forge markers, and the body is emitted last + capped in-container so
+ * run()'s tail truncation cannot eat the metadata sections.
+ */
+async function sandboxFetch(
+  url: string,
+  opts: { timeoutS: number; maxBytes: number; headers?: string[]; followRedirects?: boolean },
+): Promise<SandboxFetchResult> {
+  const nonce = randomUUID().replace(/-/g, "");
+  const [RC, META, ERR, BODY] = [`R${nonce}`, `M${nonce}`, `E${nonce}`, `B${nonce}`];
+  // Shell-quote literals (' → '\''): the script is embedded verbatim, so
+  // agent-controlled values must not break out of their quoting.
+  const headerArgs = (opts.headers ?? []).map((h) => `-H '${h.replace(/'/g, `'\\''`)}'`).join(" ");
+  // WHATWG-normalize like fetch() does — encodes spaces etc. so payloads such
+  // as a raw tautology (' OR '1'='1) don't trip curl's URL parser.
+  const quotedUrl = `'${new URL(url).href.replace(/'/g, `'\\''`)}'`;
+  const script = [
+    `body=$(mktemp /scratch/sf.XXXXXX) || exit 98`,
+    `meta=$(mktemp /scratch/sf.XXXXXX) || exit 98`,
+    `err=$(mktemp /scratch/sf.XXXXXX) || exit 98`,
+    `trap 'rm -f "$body" "$meta" "$err"' EXIT`,
+    `curl -sS ${opts.followRedirects === false ? "" : "-L --max-redirs 5"} --max-time ${Math.ceil(opts.timeoutS)} -o "$body" -w '%{json}' ${headerArgs} ${quotedUrl} >"$meta" 2>"$err"`,
+    `rc=$?`,
+    `printf '${RC}%s\\n' "$rc"`,
+    `printf '${META}%s\\n' "$(cat "$meta")"`,
+    `printf '${ERR}%s\\n' "$(cat "$err")"`,
+    `printf '${BODY}\\n'`,
+    `head -c ${Math.floor(opts.maxBytes)} "$body"`,
+  ].join("\n");
+  const res = await runSandboxed(
+    ["bash", "-c", `echo ${Buffer.from(script, "utf8").toString("base64")} | base64 -d | bash`],
+    { timeoutS: opts.timeoutS + 30 },
+  );
+  if (res.timedOut) throw new Error(`sandboxed fetch timed out after ${opts.timeoutS + 30}s`);
+  const out = res.output;
+  const rcIdx = out.indexOf(RC);
+  const metaIdx = out.indexOf(META);
+  const errIdx = out.indexOf(ERR);
+  const bodyIdx = out.indexOf(`${BODY}\n`);
+  if (
+    rcIdx < 0 ||
+    metaIdx < 0 ||
+    errIdx < 0 ||
+    bodyIdx < 0 ||
+    !(rcIdx < metaIdx && metaIdx < errIdx && errIdx < bodyIdx)
+  ) {
+    throw new Error(`sandboxed fetch failed: ${out.slice(0, 300) || `exit ${res.code}`}`);
+  }
+  const rc = Number.parseInt(out.slice(rcIdx + RC.length, metaIdx).trim(), 10);
+  const metaRaw = out.slice(metaIdx + META.length, errIdx).trim();
+  const errText = out.slice(errIdx + ERR.length, bodyIdx).trim();
+  const body = out.slice(bodyIdx + BODY.length + 1);
+  if (rc !== 0) throw new Error(errText || `curl exited ${rc}`);
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(metaRaw) as Record<string, unknown>;
+  } catch {
+    /* keep defaults */
+  }
+  return {
+    status:
+      typeof meta.response_code === "number"
+        ? meta.response_code
+        : typeof meta.http_code === "number"
+          ? meta.http_code
+          : 0,
+    finalUrl: typeof meta.url_effective === "string" ? meta.url_effective : url,
+    contentType: typeof meta.content_type === "string" ? meta.content_type : "",
+    sizeDownload: typeof meta.size_download === "number" ? meta.size_download : body.length,
+    timeMs: typeof meta.time_total === "number" ? Math.round(meta.time_total * 1000) : 0,
+    body,
+  };
+}
 
 const fetchUrl: ToolDef = {
   name: "fetch_url",
@@ -1882,7 +1974,7 @@ const fetchUrl: ToolDef = {
 
 Use this for reading external intel: NVD/MITRE/GHSA advisories, CVE write-ups, vendor docs, JSON APIs, exploit-db entries. Do NOT use it for active testing against the target (that's bash + curl/sqlmap/nuclei).
 
-Blocked: cloud metadata endpoints (169.254.169.254, metadata.google.internal), RFC1918/loopback addresses, and non-HTTP(S) schemes. Redirects are followed manually (max 5) with each hop validated.`,
+Blocked: cloud metadata endpoints (169.254.169.254, metadata.google.internal), RFC1918/loopback addresses, and non-HTTP(S) schemes. Redirects are never followed (the Location may resolve to a private host). All requests run inside the sandbox container — there is no host-network path; a missing sandbox fails the call.`,
   parameters: {
     type: "object",
     properties: {
@@ -1912,32 +2004,41 @@ Blocked: cloud metadata endpoints (169.254.169.254, metadata.google.internal), R
       typeof (params as Record<string, unknown>).max_length === "number"
         ? Math.min(Math.max(1024, (params as Record<string, unknown>).max_length as number), 200_000)
         : 50_000;
+    // Fetch inside the container — never the host network. sandboxFetch
+    // throws when no verified sandbox is active.
+    const cap = 190_000; // under run()'s 200 KiB tail cap so markers survive
     try {
-      const res = await fetch(url, {
-        redirect: "follow",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; omp-strix/0.1; security research)",
-          Accept: "text/html,application/json,text/plain,*/*",
-        },
-        signal: AbortSignal.timeout(30_000),
+      const res = await sandboxFetch(url, {
+        timeoutS: 30,
+        maxBytes: cap,
+        followRedirects: false,
+        headers: [
+          "User-Agent: Mozilla/5.0 (compatible; omp-strix/0.1; security research)",
+          "Accept: text/html,application/json,text/plain,*/*",
+        ],
       });
-      // Validate final URL after redirects.
-      const finalUrl = res.url;
+      if (res.status >= 300 && res.status < 400) {
+        return json({
+          success: false,
+          error: "Redirect refused; fetch the next URL explicitly after checking its destination.",
+        });
+      }
       for (const pat of SSRF_BLOCKED) {
-        if (pat.test(finalUrl)) {
-          return json({ success: false, error: `Redirect to restricted address blocked: ${finalUrl}` });
+        if (pat.test(res.finalUrl)) {
+          return json({ success: false, error: `Redirect to restricted address blocked: ${res.finalUrl}` });
         }
       }
-      const contentType = res.headers.get("content-type") ?? "";
-      let body = await res.text();
+      let body = res.body;
       if (body.length > maxLen) {
-        body = `${body.slice(0, maxLen)}\n\n[… truncated at ${maxLen} chars — ${body.length} total …]`;
+        body = `${body.slice(0, maxLen)}\n\n[… truncated at ${maxLen} chars — ${res.sizeDownload} bytes total …]`;
+      } else if (res.sizeDownload > cap) {
+        body = `${body}\n\n[… truncated — ${res.sizeDownload} bytes total …]`;
       }
       return json({
         success: true,
         status: res.status,
-        url: finalUrl,
-        content_type: contentType,
+        url: res.finalUrl,
+        content_type: res.contentType,
         body: sanitizeExternal(body),
       });
     } catch (err) {
@@ -2157,7 +2258,7 @@ const terminal: ToolDef = {
   label: "Terminal",
   description: `Run commands in a persistent interactive shell session — for SSH, nc, msfconsole, python REPLs, and other stateful tools.
 
-Unlike bash (one-shot), terminal keeps a session alive across calls. Use session_id to send input to an existing session, or omit to spawn a new one. The session runs inside the sandbox when active.
+Unlike bash (one-shot), terminal keeps a session alive across calls. Use session_id to send input to an existing session, or omit to spawn a new one. Sessions always run inside the verified sandbox — spawn fails closed when it is unavailable.
 
 Actions:
 - spawn (default): start a new session, return its id
@@ -2194,32 +2295,40 @@ Actions:
 
     if (action === "spawn") {
       const command = str(params, "command") || "bash";
+      let spawned: { proc: ChildProcess; sandboxed: boolean };
+      try {
+        spawned = await spawnSandboxed(command, {});
+      } catch (err) {
+        return json({
+          success: false,
+          error: `terminal spawn failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
       const id = `term-${++terminalCounter}`;
-      const { proc, sandboxed } = await spawnSandboxed(command, {});
       const session: TerminalSession = {
         id,
-        proc,
+        proc: spawned.proc,
         buffer: "",
         createdAt: new Date().toISOString(),
         lastUsed: new Date().toISOString(),
       };
-      proc.stdout?.on("data", (chunk: Buffer) => {
+      spawned.proc.stdout?.on("data", (chunk: Buffer) => {
         session.buffer += chunk.toString("utf8");
         if (session.buffer.length > 64 * 1024) session.buffer = session.buffer.slice(-64 * 1024);
       });
-      proc.stderr?.on("data", (chunk: Buffer) => {
+      spawned.proc.stderr?.on("data", (chunk: Buffer) => {
         session.buffer += chunk.toString("utf8");
         if (session.buffer.length > 64 * 1024) session.buffer = session.buffer.slice(-64 * 1024);
       });
-      proc.on("exit", () => {
+      spawned.proc.on("exit", () => {
         session.buffer += "\n[session exited]";
       });
       terminalSessions.set(id, session);
       return json({
         success: true,
         session_id: id,
-        sandboxed,
-        message: `Session ${id} spawned${sandboxed ? " (sandboxed)" : ""}. Use send/read to interact.`,
+        sandboxed: true,
+        message: `Session ${id} spawned (sandboxed). Use send/read to interact.`,
       });
     }
 
@@ -2266,7 +2375,7 @@ const python: ToolDef = {
 
 Unlike bash (which runs shell commands), python executes a script directly. Use it for: writing exploit PoCs, encoding/decoding payloads (base64, URL, hex), crypto operations (JWT signing, hash cracking), parsing tool output, and any task where a script is cleaner than a shell one-liner.
 
-The script runs inside the sandbox when active. stdout/stderr are captured and returned.`,
+The script always runs inside the verified sandbox — the call fails closed when it is unavailable. stdout/stderr are captured and returned.`,
   parameters: {
     type: "object",
     properties: {
@@ -2283,16 +2392,24 @@ The script runs inside the sandbox when active. stdout/stderr are captured and r
         ? Math.min(Math.max(5, (params as Record<string, unknown>).timeout as number), 300)
         : 60;
     // Route through the same sandbox path as bash — never raw spawn on host.
-    const res = await runSandboxed(["python3", "-c", code], { timeoutS });
-    const bounded = boundOutput(res.output, res.timedOut, timeoutS);
-    return {
-      content: [{ type: "text", text: bounded.text }],
-      details: {
-        exitCode: res.code,
-        timedOut: res.timedOut,
-        ...(bounded.savedTo ? { savedTo: bounded.savedTo } : {}),
-      },
-    };
+    // runSandboxed throws when no verified sandbox is active.
+    try {
+      const res = await runSandboxed(["python3", "-c", code], { timeoutS });
+      const bounded = boundOutput(res.output, res.timedOut, timeoutS);
+      return {
+        content: [{ type: "text", text: bounded.text }],
+        details: {
+          exitCode: res.code,
+          timedOut: res.timedOut,
+          ...(bounded.savedTo ? { savedTo: bounded.savedTo } : {}),
+        },
+      };
+    } catch (err) {
+      return json({
+        success: false,
+        error: `python failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   },
 };
 // ---------------------------------------------------------------------------
@@ -2311,7 +2428,9 @@ interface Verdict {
   probe_time_ms?: number;
 }
 
-/** Run one HTTP request pair and return a verdict. */
+/** Run one HTTP request pair inside the sandbox and return both responses.
+ *  sandboxFetch throws when no verified sandbox is active — there is no
+ *  host-network path for strix verification tools. */
 async function httpPair(
   url: string,
   inject: (u: string) => string,
@@ -2320,25 +2439,12 @@ async function httpPair(
   baseline: { status: number; length: number; time_ms: number; body: string };
   probe: { status: number; length: number; time_ms: number; body: string };
 }> {
-  const t0 = Date.now();
-  const b = await fetch(url, { signal: AbortSignal.timeout(timeoutS * 1000) });
-  const bBody = await b.text();
-  const baseline = {
-    status: b.status,
-    length: bBody.length,
-    time_ms: Date.now() - t0,
-    body: bBody.slice(0, 4096),
+  const b = await sandboxFetch(url, { timeoutS, maxBytes: 4096 });
+  const p = await sandboxFetch(inject(url), { timeoutS, maxBytes: 4096 });
+  return {
+    baseline: { status: b.status, length: b.sizeDownload, time_ms: b.timeMs, body: b.body.slice(0, 4096) },
+    probe: { status: p.status, length: p.sizeDownload, time_ms: p.timeMs, body: p.body.slice(0, 4096) },
   };
-  const t1 = Date.now();
-  const p = await fetch(inject(url), { signal: AbortSignal.timeout(timeoutS * 1000) });
-  const pBody = await p.text();
-  const probe = {
-    status: p.status,
-    length: pBody.length,
-    time_ms: Date.now() - t1,
-    body: pBody.slice(0, 4096),
-  };
-  return { baseline, probe };
 }
 
 const verifySqli: ToolDef = {
@@ -2396,6 +2502,30 @@ Returns a verdict: confirmed (probe differs materially from baseline), rejected 
   },
 };
 
+/** SSTI verdict boundary: confirmed only when the probe echoes the evaluated
+ *  expression between the unique markers AND the baseline does not. A status
+ *  or length difference alone is never proof — that was the false-positive
+ *  regression this predicate guards. */
+export function sstiVerdict(
+  witness: string,
+  baseline: { status: number; body: string },
+  probe: { status: number; body: string },
+): Verdict {
+  return probe.body.includes(witness) && !baseline.body.includes(witness)
+    ? {
+        verdict: "confirmed",
+        evidence: "Probe returned the evaluated template expression between unique markers",
+        baseline_status: baseline.status,
+        probe_status: probe.status,
+      }
+    : {
+        verdict: "rejected",
+        evidence: "No template evaluation detected",
+        baseline_status: baseline.status,
+        probe_status: probe.status,
+      };
+}
+
 const verifySsti: ToolDef = {
   name: "verify_ssti",
   label: "Verify SSTI",
@@ -2420,26 +2550,19 @@ Returns confirmed when the probe response contains '49' where the baseline did n
         ? ((params as Record<string, unknown>).timeout as number)
         : 15;
     try {
+      const marker = randomUUID().replace(/-/g, "").slice(0, 12);
+      const witness = `${marker}49${marker}`;
       const { baseline, probe } = await httpPair(
         url,
-        (u) => u.replace(new RegExp("([?&]" + param + "=)[^&]*"), "{{7*7}}"),
+        (u) => {
+          const injected = new URL(u);
+          if (!injected.searchParams.has(param)) return u;
+          injected.searchParams.set(param, `${marker}{{7*7}}${marker}`);
+          return injected.href;
+        },
         timeoutS,
       );
-      const verdict: Verdict =
-        probe.length > baseline.length && probe.length - baseline.length >= 2
-          ? {
-              verdict: "confirmed",
-              evidence:
-                "Probe response grew by " + (probe.length - baseline.length) + " bytes — template evaluated",
-              baseline_status: baseline.status,
-              probe_status: probe.status,
-            }
-          : {
-              verdict: "rejected",
-              evidence: "No template evaluation detected",
-              baseline_status: baseline.status,
-              probe_status: probe.status,
-            };
+      const verdict = sstiVerdict(witness, baseline, probe);
       return json({ success: true, ...verdict });
     } catch (err) {
       return json({
@@ -2646,135 +2769,144 @@ Modes:
         ? Math.min(Math.max(30, (params as Record<string, unknown>).timeout as number), 600)
         : 300;
 
-    if (mode === "nmap") {
-      const ports = str(params, "ports") || "--top-ports 1000";
-      const res = await runSandboxed(["nmap", "-sV", "-sC", "-oX", "-", ...ports.split(/\s+/), target], {
-        timeoutS,
-      });
-      if (res.code !== 0) {
-        return json({ success: false, error: `nmap failed: ${res.output.slice(0, 500)}` });
-      }
-      // Parse XML output into structured ports.
-      const ports_found: {
-        port: number;
-        protocol: string;
-        service: string;
-        version: string;
-        state: string;
-      }[] = [];
-      const portRe =
-        /<port\s+protocol="([^"]+)"\s+portid="(\d+)"[^>]*>[\s\S]*?<state\s+state="([^"]+)"[^>]*\/>[\s\S]*?<service\s+name="([^"]*)"[^>]*?(?:product="([^"]*)")?[^>]*?(?:version="([^"]*)")?[^>]*\/>/g;
-      let m = portRe.exec(res.output);
-      while (m !== null) {
-        if (m[3] === "open") {
-          ports_found.push({
-            port: Number.parseInt(m[2], 10),
-            protocol: m[1],
-            state: m[3],
-            service: m[4] || "unknown",
-            version: [m[5], m[6]].filter(Boolean).join(" "),
-          });
+    // Every mode runs its tools inside the sandbox — runSandboxed throws when
+    // no verified sandbox is active, so a missing container fails closed.
+    try {
+      if (mode === "nmap") {
+        const ports = str(params, "ports") || "--top-ports 1000";
+        const res = await runSandboxed(["nmap", "-sV", "-sC", "-oX", "-", ...ports.split(/\s+/), target], {
+          timeoutS,
+        });
+        if (res.code !== 0) {
+          return json({ success: false, error: `nmap failed: ${res.output.slice(0, 500)}` });
         }
-        m = portRe.exec(res.output);
+        // Parse XML output into structured ports.
+        const ports_found: {
+          port: number;
+          protocol: string;
+          service: string;
+          version: string;
+          state: string;
+        }[] = [];
+        const portRe =
+          /<port\s+protocol="([^"]+)"\s+portid="(\d+)"[^>]*>[\s\S]*?<state\s+state="([^"]+)"[^>]*\/>[\s\S]*?<service\s+name="([^"]*)"[^>]*?(?:product="([^"]*)")?[^>]*?(?:version="([^"]*)")?[^>]*\/>/g;
+        let m = portRe.exec(res.output);
+        while (m !== null) {
+          if (m[3] === "open") {
+            ports_found.push({
+              port: Number.parseInt(m[2], 10),
+              protocol: m[1],
+              state: m[3],
+              service: m[4] || "unknown",
+              version: [m[5], m[6]].filter(Boolean).join(" "),
+            });
+          }
+          m = portRe.exec(res.output);
+        }
+        return json({
+          success: true,
+          mode: "nmap",
+          target,
+          ports: ports_found,
+          port_count: ports_found.length,
+        });
       }
+
+      if (mode === "nuclei") {
+        const templates = str(params, "templates");
+        const severity = str(params, "severity");
+        const args = ["nuclei", "-u", target, "-jsonl", "-silent"];
+        if (templates) args.push("-t", templates);
+        if (severity) args.push("-s", severity);
+        const res = await runSandboxed(args, { timeoutS });
+        if (res.code !== 0 && !res.output.trim()) {
+          return json({ success: false, error: `nuclei failed: ${res.output.slice(0, 500)}` });
+        }
+        const findings: {
+          template: string;
+          severity: string;
+          host: string;
+          matched: string;
+          description: string;
+        }[] = [];
+        for (const line of res.output.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const j = JSON.parse(line);
+            findings.push({
+              template: j.templateID ?? j.template ?? "unknown",
+              severity: j.info?.severity ?? "unknown",
+              host: j.host ?? target,
+              matched: j["matched-at"] ?? j.matched ?? "",
+              description: j.info?.name ?? j.info?.description ?? "",
+            });
+          } catch {
+            // Skip non-JSON lines.
+          }
+        }
+        return json({ success: true, mode: "nuclei", target, findings, finding_count: findings.length });
+      }
+
+      if (mode === "recon-sweep") {
+        // Subfinder → httpx → nmap → nuclei pipeline.
+        const results: Record<string, unknown> = { target, steps: [] };
+        // Step 1: subfinder for subdomain enum.
+        const sub = await runSandboxed(["subfinder", "-d", target, "-silent"], { timeoutS: 60 });
+        const subdomains = sub.output.split("\n").filter(Boolean);
+        results.subdomains = subdomains;
+        (results.steps as unknown[]).push({ step: "subfinder", count: subdomains.length });
+        // Step 2: httpx probe on discovered hosts.
+        const hosts = subdomains.length > 0 ? subdomains : [target];
+        const httpxRes = await runSandboxed(
+          ["httpx", "-silent", "-status-code", "-title", ...hosts.slice(0, 50)],
+          {
+            timeoutS: 60,
+          },
+        );
+        const liveHosts = httpxRes.output.split("\n").filter(Boolean);
+        results.live_hosts = liveHosts;
+        (results.steps as unknown[]).push({ step: "httpx", count: liveHosts.length });
+        // Step 3: nmap on live hosts.
+        const nmapRes = await runSandboxed(
+          [
+            "nmap",
+            "-sV",
+            "--top-ports",
+            "100",
+            ...liveHosts.slice(0, 10).map((h) => h.replace(/^https?:\/\//, "").split("/")[0]),
+          ],
+          { timeoutS: 120 },
+        );
+        results.nmap_raw = nmapRes.output.slice(0, 2000);
+        (results.steps as unknown[]).push({ step: "nmap", hosts: liveHosts.length });
+        // Step 4: nuclei on live hosts.
+        const nucleiRes = await runSandboxed(
+          ["nuclei", "-u", liveHosts.slice(0, 10).join(","), "-jsonl", "-silent"],
+          {
+            timeoutS: 120,
+          },
+        );
+        const findings: unknown[] = [];
+        for (const line of nucleiRes.output.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            findings.push(JSON.parse(line));
+          } catch {
+            /* skip */
+          }
+        }
+        results.nuclei_findings = findings;
+        (results.steps as unknown[]).push({ step: "nuclei", count: findings.length });
+        return json({ success: true, mode: "recon-sweep", ...results });
+      }
+
+      return json({ success: false, error: `Unknown mode '${mode}'` });
+    } catch (err) {
       return json({
-        success: true,
-        mode: "nmap",
-        target,
-        ports: ports_found,
-        port_count: ports_found.length,
+        success: false,
+        error: `scan failed: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
-
-    if (mode === "nuclei") {
-      const templates = str(params, "templates");
-      const severity = str(params, "severity");
-      const args = ["nuclei", "-u", target, "-jsonl", "-silent"];
-      if (templates) args.push("-t", templates);
-      if (severity) args.push("-s", severity);
-      const res = await runSandboxed(args, { timeoutS });
-      if (res.code !== 0 && !res.output.trim()) {
-        return json({ success: false, error: `nuclei failed: ${res.output.slice(0, 500)}` });
-      }
-      const findings: {
-        template: string;
-        severity: string;
-        host: string;
-        matched: string;
-        description: string;
-      }[] = [];
-      for (const line of res.output.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const j = JSON.parse(line);
-          findings.push({
-            template: j.templateID ?? j.template ?? "unknown",
-            severity: j.info?.severity ?? "unknown",
-            host: j.host ?? target,
-            matched: j["matched-at"] ?? j.matched ?? "",
-            description: j.info?.name ?? j.info?.description ?? "",
-          });
-        } catch {
-          // Skip non-JSON lines.
-        }
-      }
-      return json({ success: true, mode: "nuclei", target, findings, finding_count: findings.length });
-    }
-
-    if (mode === "recon-sweep") {
-      // Subfinder → httpx → nmap → nuclei pipeline.
-      const results: Record<string, unknown> = { target, steps: [] };
-      // Step 1: subfinder for subdomain enum.
-      const sub = await runSandboxed(["subfinder", "-d", target, "-silent"], { timeoutS: 60 });
-      const subdomains = sub.output.split("\n").filter(Boolean);
-      results.subdomains = subdomains;
-      (results.steps as unknown[]).push({ step: "subfinder", count: subdomains.length });
-      // Step 2: httpx probe on discovered hosts.
-      const hosts = subdomains.length > 0 ? subdomains : [target];
-      const httpxRes = await runSandboxed(
-        ["httpx", "-silent", "-status-code", "-title", ...hosts.slice(0, 50)],
-        {
-          timeoutS: 60,
-        },
-      );
-      const liveHosts = httpxRes.output.split("\n").filter(Boolean);
-      results.live_hosts = liveHosts;
-      (results.steps as unknown[]).push({ step: "httpx", count: liveHosts.length });
-      // Step 3: nmap on live hosts.
-      const nmapRes = await runSandboxed(
-        [
-          "nmap",
-          "-sV",
-          "--top-ports",
-          "100",
-          ...liveHosts.slice(0, 10).map((h) => h.replace(/^https?:\/\//, "").split("/")[0]),
-        ],
-        { timeoutS: 120 },
-      );
-      results.nmap_raw = nmapRes.output.slice(0, 2000);
-      (results.steps as unknown[]).push({ step: "nmap", hosts: liveHosts.length });
-      // Step 4: nuclei on live hosts.
-      const nucleiRes = await runSandboxed(
-        ["nuclei", "-u", liveHosts.slice(0, 10).join(","), "-jsonl", "-silent"],
-        {
-          timeoutS: 120,
-        },
-      );
-      const findings: unknown[] = [];
-      for (const line of nucleiRes.output.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          findings.push(JSON.parse(line));
-        } catch {
-          /* skip */
-        }
-      }
-      results.nuclei_findings = findings;
-      (results.steps as unknown[]).push({ step: "nuclei", count: findings.length });
-      return json({ success: true, mode: "recon-sweep", ...results });
-    }
-
-    return json({ success: false, error: `Unknown mode '${mode}'` });
   },
 };
 
@@ -3039,9 +3171,9 @@ const loginAndSaveSession: ToolDef = {
   label: "Login & Save Session",
   description: `Authenticate to the target and save the session state for reuse by downstream agents.
 
-Use this during pre-flight recon when the target requires authentication. It drives a headless browser through the login flow, validates access, and saves the session (cookies + localStorage) to the scan state. Downstream agents load it with \`fetch_url\` or \`bash\` + \`curl -b\` instead of re-authenticating.
+UNSUPPORTED: this flow needs a headless browser (playwright), which the sandbox image does not ship — and strix tools never execute scripts or network requests on the host. The call always fails closed.
 
-The session is stored at \`strix/scans/<id>/auth_state.json\` and can be loaded by any agent.`,
+Instead: drive the login with bash + curl inside the sandbox, save the cookie jar under /scratch, and record it with record_artifact so downstream agents can reuse it.`,
   parameters: {
     type: "object",
     properties: {
@@ -3055,70 +3187,14 @@ The session is stored at \`strix/scans/<id>/auth_state.json\` and can be loaded 
     },
     required: ["url", "username", "password"],
   },
-  async execute(_id, params, _s, _u, ctx) {
-    const dir = scanDir();
-    if (!dir) return noScan();
-    const url = str(params, "url").trim();
-    const username = str(params, "username").trim();
-    const password = str(params, "password").trim();
-    const _totpSecret = str(params, "totp_secret").trim();
-    const successIndicator = str(params, "success_indicator").trim();
-    if (!url || !username || !password) {
-      return json({ success: false, error: "url, username, and password are required" });
-    }
-
-    // Build a login script that uses the stealth init + form fill.
-    const loginScript = `
-      const { chromium } = require('playwright-core');
-      (async () => {
-        const browser = await chromium.launch({ headless: true });
-        const ctx = await browser.newContext({
-          userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        });
-        await ctx.addInitScript(${JSON.stringify(readFileSync(join(PLUGIN_ROOT, "sandbox", "stealth.js"), "utf8"))});
-        const page = await ctx.newPage();
-        await page.goto(${JSON.stringify(url)}, { waitUntil: 'networkidle', timeout: 30000 });
-        // Fill login form — try common field names.
-        const userFields = ['input[name="username"]', 'input[name="email"]', 'input[name="user"]', 'input[type="email"]', 'input[type="text"]'];
-        const passFields = ['input[name="password"]', 'input[type="password"]'];
-        for (const f of userFields) { try { await page.fill(f, ${JSON.stringify(username)}, { timeout: 2000 }); break; } catch {} }
-        for (const f of passFields) { try { await page.fill(f, ${JSON.stringify(password)}, { timeout: 2000 }); break; } catch {} }
-        // Submit — try button click, then Enter.
-        const submitFields = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")'];
-        for (const f of submitFields) { try { await page.click(f, { timeout: 2000 }); break; } catch {} }
-        await page.waitForTimeout(3000);
-        // Check success indicator.
-        const content = await page.content();
-        const url = page.url();
-        const success = ${JSON.stringify(successIndicator)}
-          ? (content.includes(${JSON.stringify(successIndicator)}) || url.includes(${JSON.stringify(successIndicator)}))
-          : !url.includes('login') && !url.includes('signin');
-        if (success) {
-          await ctx.storageState({ path: ${JSON.stringify(join(dir, "auth_state.json"))} });
-          console.log('LOGIN_SUCCESS');
-        } else {
-          console.log('LOGIN_FAILED');
-        }
-        await browser.close();
-      })();
-    `;
-    const res = await run(["node", "-e", loginScript], { timeoutS: 60 });
-    const success = res.output.includes("LOGIN_SUCCESS");
-    if (success) {
-      addArtifact(dir, {
-        kind: "session",
-        value: `auth_state:${join(dir, "auth_state.json")}`,
-        source: url,
-        scope: url,
-        agent: callerAgent(ctx),
-      });
-    }
+  async execute() {
+    // The flow needs playwright + a browser, which the sandbox image does
+    // not ship — and strix tools never run scripts on the host. Fail closed
+    // with an actionable alternative instead.
     return json({
-      success,
-      session_path: success ? join(dir, "auth_state.json") : undefined,
-      message: success
-        ? "Login succeeded — session saved. Downstream agents can load it with fetch_url or curl -b."
-        : `Login failed: ${res.output.slice(0, 500)}`,
+      success: false,
+      error:
+        "login_and_save_session requires a headless browser (playwright) absent from the sandbox image; refusing host execution. Use bash + curl in the sandbox, save the cookie jar in /scratch, and record it with record_artifact.",
     });
   },
 };

@@ -10,7 +10,7 @@ Adversarial security-testing mode for [oh-my-pi](https://github.com/can1357/oh-m
 ## Requirements
 
 - `omp` (oh-my-pi coding agent)
-- Docker — optional but recommended; required for sandboxed command execution
+- Docker — required; Strix never runs agent-triggered commands or network requests on the host
 - Bun — for development (`bun install`, `bun run check`)
 
 ## Install
@@ -41,7 +41,7 @@ omp plugin link /path/to/omp-strix
 /strix                   # toggle off
 ```
 
-`/strix` turns strix mode on. On activation it asks whether to run shell commands inside the Docker sandbox (decline → commands run on the host). Pass the **target** (and optionally **depth**) as command args to start immediately, or name them in your next message — the first prompt after activation is captured as the scan target and starts the scan:
+`/strix` requires a verified Docker sandbox. It starts and checks the container **before** enabling scan tools; Docker or isolation failure aborts activation rather than falling back to the host. `STRIX_SANDBOX=off` is rejected. Pass the **target** (and optionally **depth**) as command args, or name them in your next message — the first post-activation prompt starts the scan:
 
 ```
 /strix
@@ -56,11 +56,11 @@ On activation the plugin:
 2. Activates the 45-tool strix toolset (`defaultInactive` until then).
 3. Switches to the `strix-red` theme, shows a `◆ STRIX` status segment, and names the session `strix: <target>`.
 
-`finish_scan` embeds scan metrics in `final-report.json`: wall-clock duration, main-session tokens/cost (from the session usage stats), and accumulated subagent usage from `task` tool results.
+`finish_scan` embeds scan metrics in `final-report.json`: wall-clock duration, main-session tokens/cost, and accumulated subagent usage from their session transcripts.
 
-On the first `bash` call the plugin pulls `ghcr.io/tmih06/omp-strix-sandbox:latest` (Debian slim + nmap, masscan, gobuster, sqlmap, hydra, john, nuclei, httpx, python3, …) and starts a shared container with the session cwd mounted at `/workspace`; every `bash` call is rewritten to `docker exec` into it. If the pull fails and `sandbox/Dockerfile` is present (source checkout), it builds locally instead. If Docker is unavailable, commands run on the host.
+On activation the plugin checks for image updates, pulls `ghcr.io/tmih06/omp-strix-sandbox:latest` (Debian slim + security tools), and starts a shared container. If the pull fails and `sandbox/Dockerfile` is present, it builds locally. Image check/pull/build progress appears in a temporary bar **below the prompt**, separate from the steady `◆ STRIX` status-line segment; the bar disappears when startup completes or fails. Each subsequent command rechecks the container's mounts and security settings; a failed check prevents execution.
 
-`finish_scan` (or `/strix` off, or session shutdown) writes `final-report.json` + `final-report.md` into the scan dir and tears the container down.
+`finish_scan` writes `final-report.json` + `final-report.md` and closes the scan. `/strix` off or session shutdown ends any active scan and tears down the container; use `finish_scan` first to produce the final report.
 
 ## Tools
 
@@ -123,23 +123,29 @@ The root agent orchestrates only — it delegates all target-touching work to su
 
 ## Sandbox
 
-Commands run inside a Docker container (`runc`), not on the host. The session cwd is bind-mounted at `/workspace` so file tools and shell see the same tree. The container runs with `--network host` and `NET_RAW` for scanning.
+Agent shell commands (`bash`, `terminal`, `python`, scanner wrappers) execute inside the Docker container. The current project directory is mounted **read-only** at `/workspace`; its private `./.strix/scratch` directory is separately mounted writable at `/scratch` for clones and temporary files. Both bind sources are under `./`, not `~/.omp`. The container runs as the invoking user's UID/GID, with a separate bridge network namespace, dropped capabilities except `NET_RAW`, `no-new-privileges`, and no Docker socket. Project source files cannot be changed through the mount.
+
+In Strix mode, native host file tools (`read`, `write`, `edit`, `grep`, `glob`), host eval/browser/debug tools, unknown tools, and generic/custom subagents are blocked; inspect source and write scratch through `bash` in the container. All Strix script and HTTP tools require the sandbox and refuse host execution even if its marker disappears. Only the fixed `strix-*` specialist agents may be spawned. Built-in scan notes and reports are written by the **trusted host extension** to `./.strix/scans`; they are not agent-controlled file tools. `login_and_save_session` is unavailable because the image lacks its browser; use an in-container login flow and save the cookie jar in `/scratch`.
+
+This is Docker process isolation, not a VM security boundary. A malicious kernel exploit, privileged host daemon, or another extension outside this plugin's tool hook is outside this plugin's enforcement. Bridge networking can still reach reachable host services; restrict the Docker daemon and network separately when scanning untrusted targets.
 
 The image is prebuilt on GHCR by `.github/workflows/sandbox-image.yml` (multi-arch amd64+arm64, pushed on changes to `sandbox/`). Users pull it; no local build needed.
 
 | Env var | Effect |
 |---|---|
-| `STRIX_SANDBOX=off` | Disable sandboxing entirely (no prompt, commands on host) |
+| `STRIX_SANDBOX=off` | Refuse `/strix` activation; remove this setting to enable the required sandbox |
 | `STRIX_SANDBOX_IMAGE` | Override the image ref; falls back to local `docker build` if pull fails and `sandbox/Dockerfile` exists |
 
 Image contents are data-driven: `sandbox/tools-apt.txt` and `sandbox/tools-pip.txt` list packages; the Dockerfile consumes both in one layer. Add a line, push, the image rebuilds.
 
 ## Scan state & reports
 
-Per-scan state lives under `<project>/strix/` (the session's working directory):
+Per-scan state lives under `<project>/.strix/` (the session's working directory); the directory must be owner-owned and mode `0700`. Previous `./strix/scans` artifacts are left untouched:
 
 ```
-active.json                    -> { scanId, dir, target, scanMode, startedAt }
+sandbox.json                  -> active container marker for agent/subagent routing
+scratch/                      -> writable bind source for /scratch
+active.json                   -> { scanId, dir, target, scanMode, sandboxed, startedAt }
 scans/<scanId>/
   notes/<id>.json              -> one file per note (append-only)
   coverage/<id>.json           -> one file per coverage entry
