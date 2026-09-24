@@ -1,5 +1,8 @@
 # omp-strix
 
+Watch it run
+![demo](https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExZDc3cDRzZ3E5M2MwZGY3czNhMG0zanN1M3U1cTdzbHBkbmJvbTVkZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/YghF6gJd21yXTCNUVf/giphy.gif)
+
 Adversarial security-testing mode for [oh-my-pi](https://github.com/can1357/oh-my-pi) — a port of the [Strix](https://github.com/usestrix/strix) multi-agent pentest workflow to an omp plugin.
 
 `/strix` toggles a full autonomous security-testing session: a dedicated root-agent system prompt, a shared Docker sandbox for command execution, a shared per-scan state store (notes / coverage / threat model / reports), 45 strix tools, 78 methodology skills, and specialist subagents for recon, hunting, validation, privesc, pivoting, and reporting.
