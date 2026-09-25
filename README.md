@@ -127,6 +127,8 @@ Agent shell commands (`bash`, `terminal`, `python`, scanner wrappers) execute in
 
 In Strix mode, native host file tools (`read`, `write`, `edit`, `grep`, `glob`), host eval/browser/debug tools, unknown tools, and generic/custom subagents are blocked; inspect source and write scratch through `bash` in the container. All Strix script and HTTP tools require the sandbox and refuse host execution even if its marker disappears. Only the fixed `strix-*` specialist agents may be spawned. Built-in scan notes and reports are written by the **trusted host extension** to `./.strix/scans`; they are not agent-controlled file tools. `login_and_save_session` is unavailable because the image lacks its browser; use an in-container login flow and save the cookie jar in `/scratch`.
 
+Harness orchestration (`task`, `wait`, `todo`, `ask`), subagent result submission (`yield`, displayed as **Submit Result**), and session-context management (`context_notes`, `new_context`) remain allowed. Result submission is permitted in independently initialized subagent runners as well as the owning session. These exceptions do not enable general host file, network, or eval access; context notes persist only through the harness-owned session store.
+
 This is Docker process isolation, not a VM security boundary. A malicious kernel exploit, privileged host daemon, or another extension outside this plugin's tool hook is outside this plugin's enforcement. Bridge networking can still reach reachable host services; restrict the Docker daemon and network separately when scanning untrusted targets.
 
 The image is prebuilt on GHCR by `.github/workflows/sandbox-image.yml` (multi-arch amd64+arm64, pushed on changes to `sandbox/`). Users pull it; no local build needed.

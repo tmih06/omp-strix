@@ -542,7 +542,19 @@ export default function (pi: ExtensionAPI) {
   // Only explicitly reviewed tool implementations may run while sandboxed.
   // Native file/network/MCP/eval tools run on the host, even for read-only
   // calls; an unrecognized plugin tool must not become a new escape hatch.
-  const SANDBOX_TOOLS = new Set([...TOOL_NAMES, "bash", "task", "wait", "todo", "ask"]);
+  // `yield` is the harness-injected Submit Result tool, including in children
+  // with fixed tool lists. Context tools touch only harness-owned session state.
+  const SANDBOX_TOOLS = new Set([
+    ...TOOL_NAMES,
+    "bash",
+    "task",
+    "wait",
+    "todo",
+    "ask",
+    "yield",
+    "context_notes",
+    "new_context",
+  ]);
   const SANDBOX_AGENTS: Record<string, true> = {
     "strix-recon": true,
     "strix-hunter": true,

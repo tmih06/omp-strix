@@ -11,7 +11,9 @@ import {
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@oh-my-pi/pi-coding-agent";
 import { runSandboxed, spawnSandboxed } from "../src/bash-tool";
+import registerStrix from "../src/index";
 import { activeSandbox, markSandboxActive, setSandboxContext } from "../src/sandbox";
 import {
   activeScan,
@@ -216,5 +218,95 @@ describe("project-local scan state boundary", () => {
     });
     expect(res.success).toBe(false);
     expect(res.error).toContain("refusing host execution");
+  });
+});
+
+describe("sandbox tool dispatch", () => {
+  function sandboxGuard() {
+    const project = tmp();
+    setProjectDir(project);
+    setSandboxContext(project);
+    // Independent subagent runner: /strix was never activated locally.
+    beginScan("example.org", "standard", true);
+    let guard: ((event: ToolCallEvent, ctx: ExtensionContext) => unknown) | undefined;
+    registerStrix({
+      pi: {},
+      registerTool() {},
+      registerCommand() {},
+      on(name: string, handler: typeof guard) {
+        if (name === "tool_call") guard = handler;
+      },
+    } as unknown as ExtensionAPI);
+    if (!guard) throw new Error("missing tool_call guard");
+    const hook = guard;
+    return (toolName: string, input: Record<string, unknown> = {}) =>
+      hook({ type: "tool_call", toolName, input }, { cwd: project } as ExtensionContext);
+  }
+
+  test("subagents can submit structured results and manage session context", () => {
+    const dispatch = sandboxGuard();
+    expect(dispatch("yield", { data: { verdict: "CONFIRMED", evidence: "proof" } })).toBeUndefined();
+    expect(dispatch("yield", { error: "Target unavailable" })).toBeUndefined();
+    expect(dispatch("context_notes", { text: "Continue validating candidate A" })).toBeUndefined();
+    expect(dispatch("context_notes")).toBeUndefined();
+    expect(dispatch("new_context")).toBeUndefined();
+  });
+
+  test("scan tools and reviewed orchestration remain available", () => {
+    const dispatch = sandboxGuard();
+    for (const tool of STRIX_TOOLS) {
+      expect(dispatch(tool.name)).toBeUndefined();
+    }
+    for (const name of ["wait", "todo", "ask"]) {
+      expect(dispatch(name)).toBeUndefined();
+    }
+    expect(dispatch("bash", { command: "pwd" })).toBeUndefined();
+    for (const agent of [
+      "strix-recon",
+      "strix-hunter",
+      "strix-validator",
+      "strix-reporter",
+      "strix-privesc",
+      "strix-pivot",
+    ]) {
+      expect(dispatch("task", { tasks: [{ agent, task: "Inspect target" }] })).toBeUndefined();
+    }
+  });
+
+  test("host access and unreviewed tools remain denied", () => {
+    const dispatch = sandboxGuard();
+    for (const name of [
+      "read",
+      "write",
+      "edit",
+      "grep",
+      "glob",
+      "find",
+      "eval",
+      "browser",
+      "debug",
+      "lsp",
+      "web_search",
+      "ast_grep",
+      "ast_edit",
+      "github",
+      "checkpoint",
+      "rewind",
+      "unknown_plugin_tool",
+    ]) {
+      expect(dispatch(name)).toMatchObject({ block: true });
+    }
+    for (const tasks of [
+      [],
+      [{ task: "Generic child" }],
+      [{ agent: "scout" }],
+      [{ agent: "strix-recon", tools: ["eval"] }],
+      [{ agent: "strix-recon" }, { agent: "custom" }],
+    ]) {
+      expect(dispatch("task", { tasks })).toMatchObject({ block: true });
+    }
+    expect(dispatch("bash", { command: "dd if=/dev/zero of=/dev/sda" })).toMatchObject({
+      block: true,
+    });
   });
 });
